@@ -3,9 +3,11 @@
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select, text
 from sqlalchemy.orm import selectinload
 
@@ -53,6 +55,11 @@ app.add_middleware(
     allow_headers=["Authorization", "Content-Type"],
 )
 app.include_router(api_router)
+
+# The console is built into the production image and shares the API origin.
+console_dir = Path(__file__).resolve().parents[1] / "web" / "dist"
+if console_dir.is_dir():
+    app.mount("/console", StaticFiles(directory=console_dir, html=True), name="admin-console")
 
 
 @app.middleware("http")

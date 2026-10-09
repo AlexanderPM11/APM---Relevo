@@ -1,3 +1,10 @@
+FROM node:24-alpine AS web-builder
+WORKDIR /web
+COPY web/package*.json ./
+RUN npm ci
+COPY web ./
+RUN npm run build
+
 FROM python:3.12-slim AS builder
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1 PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 WORKDIR /build
@@ -14,6 +21,7 @@ COPY app ./app
 COPY alembic ./alembic
 COPY alembic.ini pyproject.toml ./
 COPY config ./config
+COPY --from=web-builder /web/dist ./web/dist
 COPY scripts/entrypoint.sh ./scripts/entrypoint.sh
 RUN chmod 755 ./scripts/entrypoint.sh && chown -R relevo:relevo /app
 USER relevo

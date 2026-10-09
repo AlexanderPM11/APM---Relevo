@@ -3,6 +3,11 @@ __pycache__/
 *.py[cod]
 *$py.class
 .venv/
+web/node_modules/
+web/dist/
+test-results/
+playwright-report/
+output/playwright/
 venv/
 env/
 ENV/
