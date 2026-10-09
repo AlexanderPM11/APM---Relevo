@@ -14,6 +14,14 @@
 .login-kicker{color:#5f715e}.login-lede{color:#667166}.password-wrap button{color:#5c7159}.login-hint{color:#616d5f}.login-foot{color:#697064}
 .side-label{color:#aab8ae}.breadcrumb{color:#5e695f}.topbar-right{color:#596b5e}.environment{color:#49604e}.eyebrow,.section-kicker{color:#52664f}.intro{color:#626c62}.guide-copy{color:#566155}.guide-step i{color:#616c61}.code-tabs button{color:#b4c1b5}.method-pill{color:#496641}.response-meta code,.response-meta button{color:#59695a}.steps-row article>span{color:#526d3a}.steps-row p{color:#5e685d}.page-footer{color:#686d62}.page-footer a{color:#5e6a5e}
 
+.key-actions{display:flex;flex-shrink:0;align-items:center;gap:3px}
+.key-copy-button,.key-delete-button{min-height:32px;display:flex;align-items:center;justify-content:center;gap:5px;padding:6px 8px;border:1px solid transparent;border-radius:6px;background:transparent;color:#617765;font-size:10px;transition:all .18s}
+.key-copy-button:hover{border-color:#d7e3d3;background:#f3f7ef;color:#365c43}
+.key-delete-button{width:31px;color:#92968b}
+.key-delete-button:hover{border-color:#ebd5cd;background:#fff5f0;color:#b34f3c}
+.key-actions button:disabled{cursor:wait;opacity:.55}
+@media(max-width:650px){.key-actions{gap:0}.key-copy-button,.key-delete-button,.key-actions .revoke-button{width:30px;height:31px;padding:5px;justify-content:center}.key-copy-button span{display:none}.key-actions .revoke-button span{display:none}.key-actions .revoke-button svg{display:block}}
+
 /* Responsive and interaction refinements */
 .mobile-logout{display:none}
 .status-down{background:#bd5d48!important}

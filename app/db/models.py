@@ -30,13 +30,14 @@ class AdminUser(TimestampMixin, Base):
 
 
 class ApiKey(TimestampMixin, Base):
-    """Consumer API key; only its digest is stored."""
+    """Consumer API key with a digest and an encrypted recoverable secret."""
 
     __tablename__ = "api_keys"
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(120))
     prefix: Mapped[str] = mapped_column(String(16), index=True)
     key_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    encrypted_secret: Mapped[str | None] = mapped_column(Text, nullable=True)
     owner: Mapped[str | None] = mapped_column(String(320), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     requests_per_minute: Mapped[int] = mapped_column(Integer, default=60)

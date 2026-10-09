@@ -6,8 +6,9 @@ import './theme.css'
 import { RoutingModels } from './routing-models'
 import { Playground } from './features/playground/Playground'
 
-type ApiKey = { id: number; name: string; prefix: string; owner: string | null; is_active: boolean; requests_per_minute: number }
-type CreatedKey = { id: number; name: string; prefix: string; api_key: string }
+type ApiKey = { id: number; name: string; prefix: string; owner: string | null; is_active: boolean; is_recoverable: boolean; requests_per_minute: number }
+type CreatedKey = { id: number; name: string; prefix: string; api_key: string; is_recoverable?: boolean; rotated?: boolean }
+type KeyAction = { key: ApiKey; action: 'revoke' | 'delete' | 'rotate' }
 type Admin = { email: string }
 type PlaygroundModel = { id: string; name: string; alias: string | null; provider: string; provider_name: string; capabilities: string[] }
 type PlaygroundCatalog = { api_keys: ApiKey[]; models: PlaygroundModel[] }
@@ -114,7 +115,7 @@ export function App() {
   const [error, setError] = useState('')
   const [newKey, setNewKey] = useState<CreatedKey | null>(null)
   const [createOpen, setCreateOpen] = useState(false)
-  const [confirmRevoke, setConfirmRevoke] = useState<ApiKey | null>(null)
+  const [confirmKeyAction, setConfirmKeyAction] = useState<KeyAction | null>(null)
   const [search, setSearch] = useState('')
   const [tab, setTab] = useState<'summary' | 'keys' | 'connect' | 'examples' | 'models'>(() => location.pathname === '/' ? 'summary' : location.pathname.startsWith('/connect') ? 'connect' : location.pathname.startsWith('/playground') ? 'examples' : location.pathname.startsWith('/models') ? 'models' : 'keys')
   const [playgroundCatalog, setPlaygroundCatalog] = useState<PlaygroundCatalog>({ api_keys: [], models: [] })
@@ -130,7 +131,7 @@ export function App() {
   const [commandOpen, setCommandOpen] = useState(false)
   const [commandQuery, setCommandQuery] = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
-  const [revokingId, setRevokingId] = useState<number | null>(null)
+  const [actingKeyId, setActingKeyId] = useState<number | null>(null)
   const dialogReturnFocus = useRef<HTMLElement | null>(null)
 
   function openCreateDialog(event: React.MouseEvent<HTMLButtonElement>) {
@@ -272,7 +273,7 @@ export function App() {
   function signOut() {
     sessionStorage.removeItem(TOKEN_SLOT)
     setToken(null); setAdmin(null); setKeys([]); setTab('keys'); setNewKey(null)
-    setCreateOpen(false); setConfirmRevoke(null); setSearch(''); setError(''); setNotice('')
+    setCreateOpen(false); setConfirmKeyAction(null); setSearch(''); setError(''); setNotice('')
     navigate('/login', { replace: true })
   }
 
@@ -283,14 +284,36 @@ export function App() {
     } catch (e) { setError(e instanceof Error ? e.message : 'No se pudo crear la clave.') }
   }
 
-  async function revokeKey(key: ApiKey) {
-    const previous = keys
-    setRevokingId(key.id)
-    setConfirmRevoke(null)
-    setKeys((current) => current.map((item) => item.id === key.id ? { ...item, is_active: false } : item))
-    try { await request<void>(`/admin/api-keys/${key.id}`, { method: 'DELETE' }); setNotice(`La clave “${key.name}” quedó revocada.`); await loadKeys() }
-    catch (e) { setKeys(previous); setError(e instanceof Error ? e.message : 'No se pudo revocar la clave.') }
-    finally { setRevokingId(null) }
+  async function copyExistingKey(key: ApiKey) {
+    if (!key.is_recoverable) {
+      setConfirmKeyAction({ key, action: 'rotate' })
+      return
+    }
+    try {
+      const result = await request<CreatedKey>(`/admin/api-keys/${key.id}/reveal`, { method: 'POST' })
+      await copy(result.api_key, `key-${key.id}`)
+    } catch (e) { setError(e instanceof Error ? e.message : 'No se pudo recuperar la clave.') }
+  }
+
+  async function runKeyAction() {
+    if (!confirmKeyAction) return
+    const { key, action } = confirmKeyAction
+    setActingKeyId(key.id)
+    setConfirmKeyAction(null)
+    try {
+      if (action === 'revoke') {
+        await request<void>(`/admin/api-keys/${key.id}`, { method: 'DELETE' })
+        setNotice(`La clave “${key.name}” quedó revocada.`)
+      } else if (action === 'delete') {
+        await request<void>(`/admin/api-keys/${key.id}/permanent`, { method: 'DELETE' })
+        setNotice(`La clave “${key.name}” se eliminó. Su historial de solicitudes se conservó sin asociarlo a la clave.`)
+      } else {
+        const rotated = await request<CreatedKey>(`/admin/api-keys/${key.id}/rotate`, { method: 'POST' })
+        setNewKey({ ...rotated, rotated: true })
+      }
+      await loadKeys()
+    } catch (e) { setError(e instanceof Error ? e.message : 'No se pudo completar la acción sobre la clave.') }
+    finally { setActingKeyId(null) }
   }
 
   async function copy(text: string, label: string) {
@@ -301,7 +324,7 @@ export function App() {
   if (!token) return <Login onSubmit={signIn} error={error} busy={signingIn} />
 
   return <>
-    <div className="app-shell" inert={Boolean(createOpen || newKey || confirmRevoke || commandOpen)} aria-hidden={Boolean(createOpen || newKey || confirmRevoke || commandOpen)}>
+    <div className="app-shell" inert={Boolean(createOpen || newKey || confirmKeyAction || commandOpen)} aria-hidden={Boolean(createOpen || newKey || confirmKeyAction || commandOpen)}>
     <aside className="sidebar" aria-label="Navegación principal">
       <button className="brand brand-button" onClick={() => navigate('/')} aria-label="Relevo, resumen"><span className="brand-mark">r</span><span>relevo<span className="brand-period">.</span></span></button>
       <div className="side-label">PLATAFORMA</div>
@@ -330,9 +353,9 @@ export function App() {
           <section className="keys-section"><div className="section-head"><div><div className="section-kicker">ACCESOS DEL ESPACIO</div><h2>Claves API <span className="count-pill">{keys.length}</span></h2></div><button className="primary-button" onClick={openCreateDialog}><Icon name="plus" size={17}/> Nueva clave</button></div>
             <div className="key-toolbar"><div className="search-box"><span className="search-glyph">⌕</span><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar nombre, propietario o prefijo…" aria-label="Buscar por nombre, propietario o prefijo"/></div><button className="icon-button refresh-button" onClick={() => void loadKeys()} title="Actualizar" disabled={loading}><Icon name="refresh" size={17}/></button></div>
             <div className="key-list" aria-busy={loading}>
-              {loading && keys.length === 0 ? <div className="empty-state"><span className="spinner"/><p>Cargando accesos…</p></div> : filteredKeys.length === 0 ? <div className="empty-state"><span className="empty-key"><Icon name="key" size={24}/></span><h3>{search ? 'No encontramos coincidencias' : 'Todavía no hay claves'}</h3><p>{search ? 'Prueba con otro nombre o propietario.' : 'Crea una clave para conectar tu primera aplicación.'}</p>{!search && <button className="text-action" onClick={openCreateDialog}>Crear primera clave <Icon name="arrow" size={15}/></button>}</div> : filteredKeys.map((key) => <article className="key-row" key={key.id}><div className="key-glyph"><Icon name="key" size={18}/></div><div className="key-primary"><button className="key-detail-link" onClick={() => navigate(`/keys/${key.id}`)}>{key.name}</button><span>{key.owner || 'Sin propietario asignado'}</span></div><code className="key-prefix">rlv_{key.prefix}••••••••</code><div className="limit-chip">{new Intl.NumberFormat().format(key.requests_per_minute)}<span>/ min</span></div><div className={`key-state ${key.is_active ? 'is-active' : 'is-revoked'}`}><i/>{key.is_active ? 'Activa' : 'Revocada'}</div>{key.is_active ? <button className="revoke-button" title={`Revocar ${key.name}`} onClick={(event) => { dialogReturnFocus.current = event.currentTarget; setConfirmRevoke(key) }} disabled={revokingId === key.id}><Icon name="trash" size={16}/><span>{revokingId === key.id ? 'Revocando…' : 'Revocar'}</span></button> : <span className="revoked-label">Sin acceso</span>}</article>)}
+              {loading && keys.length === 0 ? <div className="empty-state"><span className="spinner"/><p>Cargando accesos…</p></div> : filteredKeys.length === 0 ? <div className="empty-state"><span className="empty-key"><Icon name="key" size={24}/></span><h3>{search ? 'No encontramos coincidencias' : 'Todavía no hay claves'}</h3><p>{search ? 'Prueba con otro nombre o propietario.' : 'Crea una clave para conectar tu primera aplicación.'}</p>{!search && <button className="text-action" onClick={openCreateDialog}>Crear primera clave <Icon name="arrow" size={15}/></button>}</div> : filteredKeys.map((key) => <article className="key-row" key={key.id}><div className="key-glyph"><Icon name="key" size={18}/></div><div className="key-primary"><button className="key-detail-link" onClick={() => navigate(`/keys/${key.id}`)}>{key.name}</button><span>{key.owner || 'Sin propietario asignado'}</span></div><code className="key-prefix">rlv_{key.prefix}••••••••</code><div className="limit-chip">{new Intl.NumberFormat().format(key.requests_per_minute)}<span>/ min</span></div><div className={`key-state ${key.is_active ? 'is-active' : 'is-revoked'}`}><i/>{key.is_active ? 'Activa' : 'Revocada'}</div><div className="key-actions"><button className="key-copy-button" title={key.is_recoverable ? `Copiar ${key.name}` : `Renovar ${key.name} y copiar la nueva clave`} onClick={() => key.is_recoverable ? void copyExistingKey(key) : (dialogReturnFocus.current = document.activeElement as HTMLElement, setConfirmKeyAction({ key, action: 'rotate' }))} disabled={actingKeyId === key.id}><Icon name={key.is_recoverable ? 'copy' : 'refresh'} size={14}/><span>{key.is_recoverable ? copied === `key-${key.id}` ? 'Copiada' : 'Copiar' : 'Renovar'}</span></button>{key.is_active && <button className="revoke-button" title={`Revocar ${key.name}`} onClick={(event) => { dialogReturnFocus.current = event.currentTarget; setConfirmKeyAction({ key, action: 'revoke' }) }} disabled={actingKeyId === key.id}><Icon name="trash" size={15}/><span>{actingKeyId === key.id ? 'Procesando…' : 'Revocar'}</span></button>}<button className="key-delete-button" title={`Eliminar ${key.name} definitivamente`} aria-label={`Eliminar ${key.name} definitivamente`} onClick={(event) => { dialogReturnFocus.current = event.currentTarget; setConfirmKeyAction({ key, action: 'delete' }) }} disabled={actingKeyId === key.id}><Icon name="close" size={15}/></button></div></article>)}
             </div>
-            <div className="list-foot"><span>El secreto completo solo se muestra al crear la clave.</span><span><span className="tiny-pulse"/> Secreto visible una sola vez</span></div>
+            <div className="list-foot"><span>Copia las claves cuando quieras. Las claves anteriores deben renovarse para recuperar acceso.</span><span><span className="tiny-pulse"/> Secretos cifrados</span></div>
           </section>
         </> : tab === 'connect' ? <ConnectGuide onCopy={copy} copied={copied} apiBase={apiBase} /> : <Playground catalog={playgroundCatalog} onManageKeys={() => navigate('/keys')} onRefresh={() => void loadPlaygroundCatalog()} catalogLoading={catalogLoading} catalogUpdated={catalogUpdated} />}
         <footer className="page-footer"><span>RELEVO <b>·</b> ACCESO A MODELOS, EN UN SOLO LUGAR</span><a href="/openapi.json" target="_blank" rel="noopener noreferrer">Referencia de API <Icon name="external" size={13}/></a></footer>
@@ -342,8 +365,8 @@ export function App() {
     {commandOpen && <CommandPalette query={commandQuery} onQueryChange={setCommandQuery} commands={commands} onClose={() => setCommandOpen(false)} onChoose={(run) => { setCommandOpen(false); run() }} />}
     {detailKey && <ApiKeyDetailDialog item={detailKey} onClose={() => navigate('/keys')} />}
     {createOpen && <CreateDialog onClose={() => setCreateOpen(false)} onSubmit={createKey} returnFocus={dialogReturnFocus.current}/>}
-    {newKey && <SecretDialog value={newKey.api_key} name={newKey.name} onClose={() => setNewKey(null)} onCopy={() => void copy(newKey.api_key, 'secret')} copied={copied === 'secret'} returnFocus={dialogReturnFocus.current} />}
-    {confirmRevoke && <ConfirmDialog keyInfo={confirmRevoke} onClose={() => setConfirmRevoke(null)} onConfirm={() => void revokeKey(confirmRevoke)} returnFocus={dialogReturnFocus.current}/>}
+    {newKey && <SecretDialog value={newKey.api_key} name={newKey.name} rotated={Boolean(newKey.rotated)} onClose={() => setNewKey(null)} onCopy={() => void copy(newKey.api_key, 'secret')} copied={copied === 'secret'} returnFocus={dialogReturnFocus.current} />}
+    {confirmKeyAction && <KeyActionDialog keyInfo={confirmKeyAction.key} action={confirmKeyAction.action} onClose={() => setConfirmKeyAction(null)} onConfirm={() => void runKeyAction()} returnFocus={dialogReturnFocus.current}/>}
   </>
 }
 
@@ -393,15 +416,17 @@ function CreateDialog({ onClose, onSubmit, returnFocus }: { onClose: () => void;
   return <div className="modal-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}><section ref={dialogRef} className="modal create-modal" role="dialog" aria-modal="true" aria-labelledby="create-title"><button className="modal-close" onClick={onClose} aria-label="Cerrar"><Icon name="close"/></button><div className="modal-icon"><Icon name="key" size={21}/></div><div className="modal-kicker">NUEVO ACCESO</div><h2 id="create-title">Una clave por aplicación.</h2><p className="modal-description">Así podrás identificarla y revocarla por separado cuando lo necesites.</p><form onSubmit={async (e) => { e.preventDefault(); setSaving(true); await onSubmit({ name: name.trim(), owner: owner.trim(), requests_per_minute: Number(limit) }); setSaving(false) }}><label>Nombre de la aplicación<input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="p. ej. App móvil" maxLength={120} required/></label><label>Propietario <span className="optional">OPCIONAL</span><input value={owner} onChange={(e) => setOwner(e.target.value)} placeholder="p. ej. equipo de producto" maxLength={120}/></label><label>Límite de solicitudes por minuto<div className="input-suffix"><input type="number" min="1" max="10000" value={limit} onChange={(e) => setLimit(e.target.value)} required/><span>solicitudes / min</span></div></label><div className="modal-actions"><button type="button" className="secondary-button" onClick={onClose}>Cancelar</button><button type="submit" className="primary-button" disabled={saving || !name.trim()}>{saving ? 'Creando…' : 'Crear clave'} <Icon name="arrow" size={16}/></button></div></form></section></div>
 }
 
-function SecretDialog({ value, name, onClose, onCopy, copied, returnFocus }: { value: string; name: string; onClose: () => void; onCopy: () => void; copied: boolean; returnFocus: HTMLElement | null }) {
+function SecretDialog({ value, name, rotated, onClose, onCopy, copied, returnFocus }: { value: string; name: string; rotated: boolean; onClose: () => void; onCopy: () => void; copied: boolean; returnFocus: HTMLElement | null }) {
   const dialogRef = useDialogFocus(onClose, returnFocus)
   const [revealed, setRevealed] = useState(false)
-  return <div className="modal-backdrop"><section ref={dialogRef} className="modal secret-modal" role="dialog" aria-modal="true" aria-labelledby="secret-title"><div className="secret-success"><span className="success-burst">✳</span><span>CLAVE CREADA</span></div><h2 id="secret-title">Guárdala ahora.</h2><p className="modal-description">La clave de <strong>{name}</strong> solo se muestra esta vez. Cópiala y guárdala en un lugar seguro.</p><div className="secret-box"><code>{revealed ? value : `${value.slice(0, 9)}${'•'.repeat(Math.max(0, value.length - 9))}`}</code><button onClick={() => setRevealed(!revealed)}>{revealed ? 'Ocultar' : 'Mostrar'}</button></div><button className="primary-button copy-secret" onClick={onCopy}><Icon name={copied ? 'check' : 'copy'} size={17}/>{copied ? 'Copiada' : 'Copiar clave'}</button><div className="secret-warning"><Icon name="shield" size={16}/><span>Si la pierdes, crea otra clave y revoca esta.</span></div><button className="done-button" onClick={onClose}>Ya la guardé <Icon name="arrow" size={15}/></button></section></div>
+  return <div className="modal-backdrop"><section ref={dialogRef} className="modal secret-modal" role="dialog" aria-modal="true" aria-labelledby="secret-title"><div className="secret-success"><span className="success-burst">✳</span><span>{rotated ? 'CLAVE RENOVADA' : 'CLAVE CREADA'}</span></div><h2 id="secret-title">{rotated ? 'Actualiza tu aplicación.' : 'Guárdala ahora.'}</h2><p className="modal-description">{rotated ? <>La clave anterior de <strong>{name}</strong> ya no funciona. Actualiza la aplicación con esta nueva clave.</> : <>La clave de <strong>{name}</strong> queda cifrada y podrás copiarla desde la lista cuando la necesites.</>}</p><div className="secret-box"><code>{revealed ? value : `${value.slice(0, 9)}${'•'.repeat(Math.max(0, value.length - 9))}`}</code><button onClick={() => setRevealed(!revealed)}>{revealed ? 'Ocultar' : 'Mostrar'}</button></div><button className="primary-button copy-secret" onClick={onCopy}><Icon name={copied ? 'check' : 'copy'} size={17}/>{copied ? 'Copiada' : 'Copiar clave'}</button><div className="secret-warning"><Icon name="shield" size={16}/><span>Guarda esta clave en un gestor seguro y no la incluyas en el código del navegador.</span></div><button className="done-button" onClick={onClose}>{rotated ? 'Ya actualicé mi aplicación' : 'Listo'} <Icon name="arrow" size={15}/></button></section></div>
 }
 
-function ConfirmDialog({ keyInfo, onClose, onConfirm, returnFocus }: { keyInfo: ApiKey; onClose: () => void; onConfirm: () => void; returnFocus: HTMLElement | null }) {
+function KeyActionDialog({ keyInfo, action, onClose, onConfirm, returnFocus }: { keyInfo: ApiKey; action: KeyAction['action']; onClose: () => void; onConfirm: () => void; returnFocus: HTMLElement | null }) {
   const dialogRef = useDialogFocus(onClose, returnFocus)
-  return <div className="modal-backdrop"><section ref={dialogRef} className="modal confirm-modal" role="dialog" aria-modal="true" aria-labelledby="revoke-title"><div className="revoke-mark"><Icon name="trash" size={20}/></div><h2 id="revoke-title">¿Revocar esta clave?</h2><p className="modal-description"><strong>{keyInfo.name}</strong> perderá acceso a Relevo de inmediato. Las aplicaciones que la usan dejarán de conectar.</p><div className="modal-actions"><button className="secondary-button" onClick={onClose}>Conservar clave</button><button className="danger-button" onClick={onConfirm}>Revocar acceso</button></div></section></div>
+  const copy = action === 'rotate'
+  const remove = action === 'delete'
+  return <div className="modal-backdrop"><section ref={dialogRef} className="modal confirm-modal" role="dialog" aria-modal="true" aria-labelledby="key-action-title"><div className="revoke-mark"><Icon name={remove ? 'trash' : copy ? 'refresh' : 'key'} size={20}/></div><h2 id="key-action-title">{remove ? '¿Eliminar esta clave?' : copy ? '¿Renovar y copiar la clave?' : '¿Revocar esta clave?'}</h2><p className="modal-description">{remove ? <><strong>{keyInfo.name}</strong> desaparecerá de la lista y no podrá volver a usarse. Los registros históricos se conservarán sin asociarlos a esta clave.</> : copy ? <><strong>{keyInfo.name}</strong> se creó antes de activar la recuperación cifrada. Al renovarla, la clave anterior dejará de funcionar y tendrás que actualizar las aplicaciones que la usan.</> : <><strong>{keyInfo.name}</strong> perderá acceso a Relevo de inmediato. Podrás eliminar el registro después.</>}</p><div className="modal-actions"><button className="secondary-button" onClick={onClose}>Cancelar</button><button className="danger-button" onClick={onConfirm}>{remove ? 'Eliminar definitivamente' : copy ? 'Renovar clave' : 'Revocar acceso'}</button></div></section></div>
 }
 
 function ConnectGuide({ onCopy, copied, apiBase }: { onCopy: (text: string, label: string) => void; copied: string; apiBase: string }) {

@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     jwt_expire_minutes: int = 60
     admin_login_attempt_limit: int = Field(default=5, ge=1, le=1000)
     api_key_pepper: SecretStr = SecretStr("development-only-change-me")
+    api_key_encryption_secret: SecretStr = SecretStr("development-only-api-key-encryption-secret")
     admin_email: EmailStr | None = None
     admin_password: SecretStr | None = None
     router_max_attempts: int = 3
@@ -72,13 +73,14 @@ class Settings(BaseSettings):
                 "mysql_root_password",
                 "jwt_secret",
                 "api_key_pepper",
+                "api_key_encryption_secret",
                 "admin_email",
                 "admin_password",
             )
             for field in required:
                 if field not in self.model_fields_set:
                     raise ValueError(f"{field.upper()} must be explicitly configured in production")
-            for field in ("jwt_secret", "api_key_pepper"):
+            for field in ("jwt_secret", "api_key_pepper", "api_key_encryption_secret"):
                 secret = getattr(self, field).get_secret_value()
                 if secret.startswith("development-only") or len(secret) < 32:
                     raise ValueError(

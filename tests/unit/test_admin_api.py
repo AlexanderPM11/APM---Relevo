@@ -7,6 +7,7 @@ import pytest_asyncio
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from pydantic import SecretStr
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
@@ -16,7 +17,7 @@ import app.auth.rate_limit as auth_rate_limit
 from app.core.config import Settings
 from app.core.security import hash_password
 from app.db.base import Base
-from app.db.models import AdminUser
+from app.db.models import AdminUser, ApiKey, RequestLog
 from app.db.session import get_session
 
 
@@ -111,15 +112,70 @@ async def test_api_key_lifecycle_requires_admin_and_hides_saved_secret(
         "prefix": payload["prefix"],
         "owner": "Equipo web",
         "is_active": True,
+        "is_recoverable": True,
         "requests_per_minute": 24,
     }
     assert "api_key" not in listed_key
     assert payload["api_key"] not in listing.text
 
+    revealed = await api_client.post(
+        f"/admin/api-keys/{payload['id']}/reveal", headers=headers
+    )
+    assert revealed.status_code == 200
+    assert revealed.json()["api_key"] == payload["api_key"]
+    assert revealed.headers["cache-control"] == "no-store"
+
     revoked = await api_client.delete(f"/admin/api-keys/{payload['id']}", headers=headers)
     assert revoked.status_code == 204
     listing_after_revoke = await api_client.get("/admin/api-keys", headers=headers)
     assert listing_after_revoke.json()[0]["is_active"] is False
+
+
+@pytest.mark.asyncio
+async def test_legacy_key_can_be_rotated_and_permanently_deleted_with_audit_history(
+    api_client: AsyncClient,
+) -> None:
+    token = await admin_token(api_client)
+    headers = {"Authorization": f"Bearer {token}"}
+    settings = api_routes.get_settings()
+    old_secret = "rlv_legacy_old-secret-that-is-long-enough"
+    async with api_routes.SessionLocal() as session:
+        legacy = ApiKey(
+            name="Clave antigua",
+            prefix="legacy",
+            key_hash=api_routes.hash_api_key(
+                old_secret, settings.api_key_pepper.get_secret_value()
+            ),
+            encrypted_secret=None,
+            is_active=True,
+            requests_per_minute=60,
+        )
+        session.add(legacy)
+        await session.flush()
+        key_id = legacy.id
+        session.add(RequestLog(api_key_id=key_id, status="success"))
+        await session.commit()
+
+    unavailable = await api_client.post(f"/admin/api-keys/{key_id}/reveal", headers=headers)
+    assert unavailable.status_code == 409
+
+    rotated = await api_client.post(f"/admin/api-keys/{key_id}/rotate", headers=headers)
+    assert rotated.status_code == 200
+    replacement = rotated.json()["api_key"]
+    assert replacement != old_secret
+    assert rotated.headers["cache-control"] == "no-store"
+    listing = await api_client.get("/admin/api-keys", headers=headers)
+    assert listing.json()[0]["is_recoverable"] is True
+
+    deleted = await api_client.delete(
+        f"/admin/api-keys/{key_id}/permanent", headers=headers
+    )
+    assert deleted.status_code == 204
+    assert (await api_client.get("/admin/api-keys", headers=headers)).json() == []
+    async with api_routes.SessionLocal() as session:
+        log = (await session.execute(select(RequestLog))).scalar_one()
+        assert log.status == "success"
+        assert log.api_key_id is None
 
 
 @pytest.mark.asyncio

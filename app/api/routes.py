@@ -13,7 +13,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -22,6 +22,8 @@ from app.auth.rate_limit import allow_request
 from app.core.config import get_settings
 from app.core.security import (
     create_access_token,
+    decrypt_api_key,
+    encrypt_api_key,
     generate_api_key,
     hash_api_key,
     verify_password,
@@ -679,11 +681,20 @@ async def create_api_key(body: ApiKeyCreate, session: SessionDep) -> dict[str, A
         owner=body.owner,
         prefix=prefix,
         key_hash=hash_api_key(key, settings.api_key_pepper.get_secret_value()),
+        encrypted_secret=encrypt_api_key(
+            key, settings.api_key_encryption_secret.get_secret_value()
+        ),
         requests_per_minute=body.requests_per_minute,
     )
     session.add(record)
     await session.commit()
-    return {"id": record.id, "name": record.name, "prefix": prefix, "api_key": key}
+    return {
+        "id": record.id,
+        "name": record.name,
+        "prefix": prefix,
+        "api_key": key,
+        "is_recoverable": True,
+    }
 
 
 @router.get("/admin/api-keys", dependencies=[admin_guard()])
@@ -698,6 +709,7 @@ async def list_api_keys(session: SessionDep) -> list[dict[str, Any]]:
             "owner": key.owner,
             "is_active": key.is_active,
             "requests_per_minute": key.requests_per_minute,
+            "is_recoverable": key.encrypted_secret is not None,
         }
         for key in result.scalars()
     ]
@@ -710,6 +722,71 @@ async def revoke_api_key(key_id: int, session: SessionDep) -> Response:
     if key is None:
         raise HTTPException(404, "API key not found")
     key.is_active = False
+    await session.commit()
+    return Response(status_code=204)
+
+
+@router.post("/admin/api-keys/{key_id}/reveal", dependencies=[admin_guard()])
+async def reveal_api_key(key_id: int, response: Response, session: SessionDep) -> dict[str, str]:
+    """Return an existing API secret to an authenticated administrator without caching it."""
+    key = await session.get(ApiKey, key_id)
+    if key is None:
+        raise HTTPException(404, "API key not found")
+    if key.encrypted_secret is None:
+        raise HTTPException(409, "This key predates encrypted recovery and must be renewed")
+    try:
+        secret = decrypt_api_key(
+            key.encrypted_secret,
+            get_settings().api_key_encryption_secret.get_secret_value(),
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            503, "API key is unavailable with the current server configuration"
+        ) from exc
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Pragma"] = "no-cache"
+    return {"id": key.id, "name": key.name, "prefix": key.prefix, "api_key": secret}
+
+
+@router.post("/admin/api-keys/{key_id}/rotate", dependencies=[admin_guard()])
+async def rotate_api_key(key_id: int, response: Response, session: SessionDep) -> dict[str, Any]:
+    """Replace a legacy key that cannot be retrieved, invalidating the previous secret."""
+    key = await session.get(ApiKey, key_id)
+    if key is None:
+        raise HTTPException(404, "API key not found")
+    if not key.is_active:
+        raise HTTPException(409, "Only active API keys can be renewed")
+    secret, prefix = generate_api_key()
+    settings = get_settings()
+    key.prefix = prefix
+    key.key_hash = hash_api_key(secret, settings.api_key_pepper.get_secret_value())
+    key.encrypted_secret = encrypt_api_key(
+        secret, settings.api_key_encryption_secret.get_secret_value()
+    )
+    await session.commit()
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Pragma"] = "no-cache"
+    return {
+        "id": key.id,
+        "name": key.name,
+        "prefix": prefix,
+        "api_key": secret,
+        "is_recoverable": True,
+    }
+
+
+@router.delete(
+    "/admin/api-keys/{key_id}/permanent", dependencies=[admin_guard()], status_code=204
+)
+async def permanently_delete_api_key(key_id: int, session: SessionDep) -> Response:
+    """Delete a key while keeping request audit records without their key association."""
+    key = await session.get(ApiKey, key_id)
+    if key is None:
+        raise HTTPException(404, "API key not found")
+    await session.execute(
+        update(RequestLog).where(RequestLog.api_key_id == key_id).values(api_key_id=None)
+    )
+    await session.delete(key)
     await session.commit()
     return Response(status_code=204)
 

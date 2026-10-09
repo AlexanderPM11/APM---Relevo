@@ -17,7 +17,7 @@ La consola obtiene su base pública de `API_PUBLIC_BASE_URL` o del origen de la 
 
 ### 2.1 Claves de consumidor
 
-Una persona administradora crea una clave con `POST /admin/api-keys`. El valor completo se devuelve una sola vez y tiene formato `rlv_<prefijo>_<secreto>`. Guárdalo en el backend o gestor de secretos de la aplicación cliente.
+Una persona administradora crea una clave con `POST /admin/api-keys`. El valor completo tiene formato `rlv_<prefijo>_<secreto>`. Se almacena cifrado para que una persona administradora autenticada pueda recuperarlo después; el hash HMAC sigue siendo el que se usa para validar cada solicitud. Guárdalo también en el backend o gestor de secretos de la aplicación cliente.
 
 ```http
 Authorization: Bearer rlv_<CLAVE>
@@ -253,9 +253,14 @@ Categorías válidas: `conversation`, `writing`, `summarization`, `programming`,
 
 | Método | Ruta | Body / respuesta |
 |---|---|---|
-| `GET` | `/admin/api-keys` | Lista `{id,name,prefix,owner,is_active,requests_per_minute}`. Nunca devuelve el secreto completo. |
-| `POST` | `/admin/api-keys` | Body `{ "name":"Mi aplicación", "owner":"Equipo", "requests_per_minute":60 }`. Nombre requerido 1–120; owner opcional hasta 120; límite 1–10.000. Devuelve `201` e incluye `api_key` completo solo en esta respuesta. |
+| `GET` | `/admin/api-keys` | Lista `{id,name,prefix,owner,is_active,is_recoverable,requests_per_minute}`. Nunca devuelve el secreto completo. |
+| `POST` | `/admin/api-keys` | Body `{ "name":"Mi aplicación", "owner":"Equipo", "requests_per_minute":60 }`. Nombre requerido 1–120; owner opcional hasta 120; límite 1–10.000. Devuelve `201` e incluye `api_key` completo. |
+| `POST` | `/admin/api-keys/{key_id}/reveal` | Recupera el secreto cifrado de una clave. Requiere JWT admin; respuesta con `Cache-Control: no-store`. `409` si es una clave histórica sin secreto recuperable; `503` si el secreto de cifrado configurado no puede descifrarla. |
+| `POST` | `/admin/api-keys/{key_id}/rotate` | Genera un secreto nuevo y reemplaza el anterior en la misma clave. Invalida inmediatamente el valor previo; devuelve el nuevo `api_key` con `Cache-Control: no-store`. Solo acepta claves activas. |
 | `DELETE` | `/admin/api-keys/{key_id}` | Revoca lógicamente (`is_active=false`); `204` sin body. Devuelve `404` si no existe. |
+| `DELETE` | `/admin/api-keys/{key_id}/permanent` | Elimina el registro de clave; devuelve `204`. Conserva RequestLog y desvincula de él el `api_key_id`. |
+
+`is_recoverable=false` identifica claves creadas antes de habilitar el cifrado. No es posible derivar su secreto desde el hash; usa la ruta `rotate` para generar otro valor e invalida el anterior. La lista y el catálogo del Playground muestran metadatos, nunca ciphertext ni texto secreto.
 
 ### 4.3 Playground
 
@@ -436,6 +441,7 @@ Las variables se leen al iniciar el proceso mediante `Settings` (Pydantic Settin
 | `JWT_EXPIRE_MINUTES` | `60` | Vigencia del JWT administrador. |
 | `ADMIN_LOGIN_ATTEMPT_LIMIT` | `5` | Intentos por IP en ventana fija de 5 minutos; rango validado 1–1.000. |
 | `API_KEY_PEPPER` | valor de desarrollo inseguro | Pepper HMAC para hashes de claves. En producción requiere valor explícito y único de al menos 32 caracteres. Cambiarlo invalida claves existentes. |
+| `API_KEY_ENCRYPTION_SECRET` | valor de desarrollo inseguro | Secreto único de al menos 32 caracteres en producción. Deriva la clave Fernet que cifra las claves recuperables. Consérvalo en un gestor de secretos y haz una copia segura: cambiarlo impide recuperar secretos cifrados previamente, aunque los hashes existentes siguen validando solicitudes. |
 | `ADMIN_EMAIL` | sin definir | Cuenta inicial que se crea si no hay ningún administrador en DB. Cambiarla no renombra una cuenta ya creada. |
 | `ADMIN_PASSWORD` | sin definir | Contraseña para la cuenta inicial; producción exige explícita y mínimo 12 caracteres. Cambiarla no rota la contraseña guardada de una cuenta existente. |
 
@@ -501,7 +507,7 @@ En `config/models.seed.yaml`, un proveedor se habilita según su credencial; Kil
 
 Reintenta `429` respetando `Retry-After`; para fallos transitorios `502`/`503`/`504`, aplica backoff exponencial con jitter y un máximo. No reintentes automáticamente errores de validación `400`/`422`.
 
-Los contadores de rate limit viven en memoria de proceso (ventana móvil de 60 s para claves y clasificación; 300 s para login). No se comparten entre workers ni réplicas; despliega con un solo worker si necesitas estos límites tal como están o implementa almacenamiento compartido. Las cuotas de modelo y RequestLog sí se persisten en DB. Las claves se guardan como HMAC SHA-256 con pepper y los prompts no se registran en `RequestLog`.
+Los contadores de rate limit viven en memoria de proceso (ventana móvil de 60 s para claves y clasificación; 300 s para login). No se comparten entre workers ni réplicas; despliega con un solo worker si necesitas estos límites tal como están o implementa almacenamiento compartido. Las cuotas de modelo y RequestLog sí se persisten en DB. Las claves se validan con HMAC SHA-256 y pepper, y se guardan cifradas con `API_KEY_ENCRYPTION_SECRET` para permitir recuperarlas desde la consola. Al eliminar permanentemente una clave, RequestLog conserva sus datos pero pierde la asociación con esa clave. Los prompts no se registran en `RequestLog`.
 
 ## 9. Rutas completas implementadas
 
@@ -520,7 +526,10 @@ Este inventario es la lista de rutas del servicio actual. `/metrics` se implemen
 | `POST` | `/admin/routing/classify` | JWT admin |
 | `GET` | `/admin/api-keys` | JWT admin |
 | `POST` | `/admin/api-keys` | JWT admin |
+| `POST` | `/admin/api-keys/{key_id}/reveal` | JWT admin |
+| `POST` | `/admin/api-keys/{key_id}/rotate` | JWT admin |
 | `DELETE` | `/admin/api-keys/{key_id}` | JWT admin |
+| `DELETE` | `/admin/api-keys/{key_id}/permanent` | JWT admin |
 | `GET` | `/admin/providers` | JWT admin |
 | `POST` | `/admin/providers/{slug}` | JWT admin |
 | `DELETE` | `/admin/providers/{slug}` | JWT admin |
