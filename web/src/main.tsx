@@ -59,7 +59,13 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     let message = 'No se pudo completar la solicitud.'
     try {
       const body = await response.json() as { detail?: string }
-      if (body.detail) message = body.detail
+      if (body.detail) {
+        const friendlyMessages: Record<string, string> = {
+          'No compatible model is currently available': 'El modelo elegido no puede procesar esta solicitud. Prueba con Automático o selecciona otro modelo.',
+          'All available models failed': 'Los modelos disponibles no pudieron responder. Prueba con Automático o inténtalo de nuevo en unos segundos.',
+        }
+        message = friendlyMessages[body.detail] ?? body.detail
+      }
     } catch { /* The server may return an empty response. */ }
     throw new Error(message)
   }

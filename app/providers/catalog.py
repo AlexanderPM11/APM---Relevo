@@ -24,6 +24,33 @@ _PROVIDER_TIERS = {
     "ollama": 4,
     "huggingface": 4,
 }
+_NON_CHAT_MODEL_MARKERS = (
+    "embed",
+    "rerank",
+    "prompt-guard",
+    "whisper",
+    "orpheus",
+    "transcrib",
+    "tts",
+    "moderation",
+    "content-safety",
+    "nemoguard",
+    "safety-guard",
+    "llama-guard",
+    "ocr",
+    "reward",
+    "diffusion",
+    "stable-diffusion",
+    "flux.",
+    "lyria",
+    "audio",
+    "speech",
+    "realtime",
+    "deplot",
+    "nvclip",
+    "riva-translate",
+    "synthetic-video-detector",
+)
 
 
 def _provider_url(provider: Provider, settings: Settings) -> str:
@@ -50,6 +77,8 @@ def _normalize_models(provider: Provider, payload: Any) -> list[dict[str, Any]]:
             continue
         if name.startswith("models/"):
             name = name.removeprefix("models/")
+        if any(marker in name.lower() for marker in _NON_CHAT_MODEL_MARKERS):
+            continue
 
         # Gemini's list includes embeddings and other non-chat models.
         actions = item.get("supportedGenerationMethods") or item.get("supported_actions")
