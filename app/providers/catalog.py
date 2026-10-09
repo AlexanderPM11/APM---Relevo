@@ -54,6 +54,25 @@ _NON_CHAT_MODEL_MARKERS = (
 )
 
 
+def _default_free_routing(name: str) -> tuple[str, list[str]]:
+    """Provide editable starter profiles for explicitly free catalog routes."""
+    lowered = name.lower()
+    advanced_markers = ("ultra", "super-120b", "step-5", "reasoning", "inkling:free")
+    if any(marker in lowered for marker in advanced_markers):
+        profile = "advanced"
+    elif any(marker in lowered for marker in ("mini", "flash", "2.6b", "-xs", "small")):
+        profile = "light"
+    else:
+        profile = "balanced"
+    if "code" in lowered:
+        tasks = ["programming"]
+    elif any(marker in lowered for marker in ("reasoning", "step-5", "nemotron")):
+        tasks = ["reasoning"]
+    else:
+        tasks = []
+    return profile, tasks
+
+
 def _provider_url(provider: Provider, settings: Settings) -> str:
     base_url = provider.base_url.rstrip("/")
     if provider.slug == "cloudflare":
@@ -208,6 +227,11 @@ async def refresh_provider_catalog(session: AsyncSession, settings: Settings) ->
             for item in discovered:
                 model = existing.get(item["name"])
                 if model is None:
+                    profile, tasks = (
+                        _default_free_routing(item["name"])
+                        if item["is_free"] is True
+                        else (None, [])
+                    )
                     model = Model(
                         provider_id=provider.id,
                         name=item["name"],
@@ -221,6 +245,8 @@ async def refresh_provider_catalog(session: AsyncSession, settings: Settings) ->
                         context_max=max(1, item["context_max"]),
                         capabilities=item["capabilities"],
                         is_free=item["is_free"],
+                        routing_profile=profile,
+                        routing_tasks=tasks,
                         free_verified_at=(
                             datetime.now(UTC).replace(tzinfo=None)
                             if item["is_free"] is not None
@@ -240,4 +266,8 @@ async def refresh_provider_catalog(session: AsyncSession, settings: Settings) ->
                     if item["is_free"] is not None:
                         model.is_free = item["is_free"]
                         model.free_verified_at = datetime.now(UTC).replace(tzinfo=None)
+                    if item["is_free"] is True and model.routing_profile is None:
+                        model.routing_profile, model.routing_tasks = _default_free_routing(
+                            item["name"]
+                        )
         await session.commit()

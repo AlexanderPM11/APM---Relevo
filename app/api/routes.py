@@ -1,10 +1,16 @@
 """Public OpenAI-compatible and administrator API endpoints."""
 
+import asyncio
+import json
+import logging
 import time
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import suppress
 from datetime import UTC, datetime
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -29,9 +35,10 @@ from app.db.models import (
     Provider,
     RequestLog,
 )
-from app.db.session import get_session
+from app.db.session import SessionLocal, get_session
 from app.providers.base import ProviderError
 from app.providers.catalog import refresh_provider_catalog
+from app.router.classifier import classify_with_laya
 from app.router.service import complete_with_fallback, provider_is_configured
 from app.schemas.chat import ChatCompletionRequest
 
@@ -52,6 +59,12 @@ class ApiKeyCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     owner: str | None = Field(default=None, max_length=120)
     requests_per_minute: int = Field(default=60, gt=0, le=10000)
+
+
+class RoutingClassifyRequest(BaseModel):
+    """Bounded text input for administrator-only, provider-free routing diagnostics."""
+
+    text: str = Field(min_length=1, max_length=6000)
 
 
 class PlaygroundChatRequest(ChatCompletionRequest):
@@ -199,7 +212,13 @@ async def playground_chat(
     body: PlaygroundChatRequest, response: Response, http_request: Request, session: SessionDep
 ) -> dict[str, Any]:
     """Run a real chat from the console, applying the selected key's limits and usage log."""
-    api_key = await session.get(ApiKey, body.api_key_id)
+    await _validate_playground_key(body.api_key_id, session)
+    return await _run_playground_chat(body, response, http_request, session)
+
+
+async def _validate_playground_key(api_key_id: int, session: AsyncSession) -> None:
+    """Validate and charge the same rate limit for ordinary and streaming playground requests."""
+    api_key = await session.get(ApiKey, api_key_id)
     now = datetime.now(UTC).replace(tzinfo=None)
     if (
         api_key is None
@@ -207,20 +226,37 @@ async def playground_chat(
         or (api_key.expires_at and api_key.expires_at <= now)
     ):
         raise HTTPException(404, "Active API key not found")
-    settings = get_settings()
     if not await allow_request(f"api-key:{api_key.id}", api_key.requests_per_minute, 60):
         raise HTTPException(429, "API key rate limit exceeded", headers={"Retry-After": "60"})
     api_key.last_used_at = now
+    await session.commit()
+
+
+async def _run_playground_chat(
+    body: PlaygroundChatRequest,
+    response: Response,
+    http_request: Request,
+    session: AsyncSession,
+    on_event: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
+) -> dict[str, Any]:
+    """Share routing and accounting between both playground transports."""
+    settings = get_settings()
     payload = body.model_dump(exclude={"api_key_id", "model", "stream"}, exclude_none=True)
     started = time.monotonic()
     try:
         completion, model, provider, attempts = await complete_with_fallback(
-            session, settings, body.model, payload, http_request.app.state.laya_client
+            session,
+            settings,
+            body.model,
+            payload,
+            http_request.app.state.laya_client,
+            on_event=on_event,
+            route_by_task=on_event is not None,
         )
     except ProviderError as error:
         session.add(
             RequestLog(
-                api_key_id=api_key.id,
+                api_key_id=body.api_key_id,
                 requested_model=body.model,
                 attempts=error.attempts,
                 status="error",
@@ -239,7 +275,7 @@ async def playground_chat(
     routing = completion.pop("_relevo_routing", None)
     session.add(
         RequestLog(
-            api_key_id=api_key.id,
+            api_key_id=body.api_key_id,
             requested_model=body.model,
             final_model=model.name,
             attempts=attempts,
@@ -268,6 +304,91 @@ async def playground_chat(
     return completion
 
 
+@router.post("/admin/playground/chat/stream", dependencies=[admin_guard()])
+async def playground_chat_stream(
+    body: PlaygroundChatRequest, http_request: Request, session: SessionDep
+) -> StreamingResponse:
+    """Stream actual routing decisions and provider text through an authenticated POST."""
+    await _validate_playground_key(body.api_key_id, session)
+    await session.close()
+
+    async def events() -> AsyncIterator[str]:
+        queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue(maxsize=32)
+        started = time.monotonic()
+
+        async def emit(event: dict[str, Any]) -> None:
+            await queue.put({**event, "elapsed_ms": int((time.monotonic() - started) * 1000)})
+
+        async def run() -> None:
+            try:
+                # Keep the database session alive for the entire event stream.
+                async with SessionLocal() as stream_session:
+                    try:
+                        completion = await _run_playground_chat(
+                            body, Response(), http_request, stream_session, emit
+                        )
+                        await emit({"event": "completed", "completion": completion})
+                    except asyncio.CancelledError:
+                        await stream_session.rollback()
+                        stream_session.add(
+                            RequestLog(
+                                api_key_id=body.api_key_id,
+                                requested_model=body.model,
+                                status="cancelled",
+                                error_code="client_disconnected",
+                                latency_ms=int((time.monotonic() - started) * 1000),
+                            )
+                        )
+                        await stream_session.commit()
+                        raise
+                    except HTTPException as error:
+                        await emit(
+                            {
+                                "event": "error",
+                                "message": str(error.detail),
+                                "status_code": error.status_code,
+                            }
+                        )
+                    except Exception:
+                        logging.getLogger(__name__).exception("Playground streaming request failed")
+                        await emit(
+                            {
+                                "event": "error",
+                                "message": "No se pudo completar la solicitud.",
+                                "status_code": 500,
+                            }
+                        )
+            except asyncio.CancelledError:
+                raise
+            await queue.put(None)
+
+        task = asyncio.create_task(run())
+        try:
+            yield ": connected\n\n"
+            while True:
+                try:
+                    item = await asyncio.wait_for(queue.get(), timeout=15)
+                except TimeoutError:
+                    yield ": keep-alive\n\n"
+                    continue
+                if item is None:
+                    break
+                yield f"data: {json.dumps(item, ensure_ascii=False)}\n\n"
+        finally:
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
+
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 @router.post("/admin/auth/login")
 async def login(body: LoginRequest, request: Request, session: SessionDep) -> dict[str, str]:
     """Authenticate an administrator and issue a short-lived JWT."""
@@ -290,6 +411,39 @@ async def login(body: LoginRequest, request: Request, session: SessionDep) -> di
         settings.jwt_expire_minutes,
     )
     return {"access_token": token, "token_type": "bearer"}
+
+
+@router.post("/admin/routing/classify")
+async def preview_routing_classification(
+    body: RoutingClassifyRequest,
+    request: Request,
+    admin: Annotated[AdminUser, Depends(require_admin)],
+) -> dict[str, Any]:
+    """Measure classification alone without calling a chat model or spending provider quota."""
+    settings = get_settings()
+    if not await allow_request(f"routing-preview:{admin.email}", 30, 60):
+        raise HTTPException(
+            429,
+            "Routing preview rate limit exceeded",
+            headers={"Retry-After": "60"},
+        )
+    started = time.monotonic()
+    decision = await classify_with_laya(
+        request.app.state.laya_client,
+        settings,
+        [{"role": "user", "content": body.text}],
+    )
+    return {
+        "task": decision.task,
+        "complexity": decision.complexity,
+        "confidence": decision.confidence,
+        "classifier": decision.classifier,
+        "classifier_ms": decision.classifier_ms,
+        "fallback": decision.fallback,
+        "request_ms": int((time.monotonic() - started) * 1000),
+        "mode": settings.laya_routing_mode,
+        "strategy": settings.router_strategy,
+    }
 
 
 @router.post("/admin/api-keys", dependencies=[admin_guard()], status_code=201)

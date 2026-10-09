@@ -145,6 +145,7 @@ Todas las rutas siguientes requieren JWT administrativo, excepto el login.
 | Método | Ruta | Función / entrada |
 |---|---|---|
 | `POST` | `/admin/auth/login` | Body `{ "email": "admin@ejemplo.com", "password": "…" }`; devuelve `{access_token, token_type}`. |
+| `POST` | `/admin/routing/classify` | Diagnóstico del clasificador sin llamar a un modelo de chat. Body `{ "text": "…" }` (máximo 6.000 caracteres); devuelve tarea, dificultad, confianza y tiempos. Requiere JWT; 30 solicitudes por minuto. |
 | `GET` | `/admin/api-keys` | Lista id, nombre, prefijo, propietario, estado y límite; nunca devuelve el secreto. |
 | `POST` | `/admin/api-keys` | Crea clave. Body `{ "name": "Mi app", "owner": "Equipo", "requests_per_minute": 60 }`; devuelve `201` y `api_key` una vez. |
 | `DELETE` | `/admin/api-keys/{key_id}` | Revoca (desactivación lógica) y devuelve `204`. |

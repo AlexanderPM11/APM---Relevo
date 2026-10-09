@@ -1,5 +1,6 @@
 """Common provider errors and adapter contract."""
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
@@ -23,6 +24,10 @@ class ProviderAdapter(Protocol):
     """Async chat interface implemented by provider adapters."""
 
     async def chat(self, model: str, payload: dict[str, Any]) -> dict[str, Any]: ...
+
+    async def chat_stream(
+        self, model: str, payload: dict[str, Any], on_delta: Callable[[str], Awaitable[None]]
+    ) -> dict[str, Any]: ...
 
 
 def parse_retry_after(value: str | None) -> int | None:
@@ -88,6 +93,54 @@ class OpenAICompatibleAdapter:
             raise ProviderError(502, "Provider returned an invalid response")
         return result
 
+    async def chat_stream(
+        self, model: str, payload: dict[str, Any], on_delta: Callable[[str], Awaitable[None]]
+    ) -> dict[str, Any]:
+        """Relay OpenAI-compatible SSE deltas without simulating typing."""
+        from app.providers.streaming import sse_json, text_completion
+
+        body = {**payload, "model": model, "stream": True}
+        body["stream_options"] = {"include_usage": True}
+        headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
+        headers.update(self.additional_headers)
+        text: list[str] = []
+        usage: dict[str, Any] = {}
+        finish_reason: str | None = None
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                async with client.stream(
+                    "POST", f"{self.base_url}/chat/completions", json=body, headers=headers
+                ) as response:
+                    _check_stream_status(response)
+                    if "text/event-stream" not in response.headers.get("content-type", ""):
+                        # Some compatible providers ignore stream and return a JSON completion.
+                        await response.aread()
+                        result = response.json()
+                        content = result["choices"][0]["message"].get("content")
+                        if not isinstance(content, str) or not content:
+                            raise ProviderError(502, "Provider returned no text content")
+                        await on_delta(content)
+                        return dict(result)
+                    async for chunk in sse_json(response):
+                        for choice in chunk.get("choices") or []:
+                            if choice.get("index", 0) != 0:
+                                continue
+                            delta = choice.get("delta", {}).get("content")
+                            if isinstance(delta, str) and delta:
+                                text.append(delta)
+                                await on_delta(delta)
+                            if choice.get("finish_reason"):
+                                finish_reason = str(choice["finish_reason"])
+                        if isinstance(chunk.get("usage"), dict):
+                            usage = chunk["usage"]
+        except httpx.TimeoutException as exc:
+            raise ProviderError(504, "Provider timed out") from exc
+        except httpx.HTTPError as exc:
+            raise ProviderError(502, "Provider network error") from exc
+        except (ValueError, TypeError, AttributeError, KeyError, IndexError) as exc:
+            raise ProviderError(502, "Provider returned an invalid stream") from exc
+        return text_completion(model, "".join(text), usage, finish_reason)
+
 
 class GoogleAIStudioAdapter:
     """Adapter translating chat messages to the Gemini generateContent API."""
@@ -97,8 +150,8 @@ class GoogleAIStudioAdapter:
         self.api_key = api_key
         self.timeout = timeout
 
-    async def chat(self, model: str, payload: dict[str, Any]) -> dict[str, Any]:
-        """Translate a basic text chat request and normalize the Gemini response."""
+    def _request_body(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Translate text, image and system messages for both Gemini endpoints."""
         messages = payload.get("messages", [])
 
         def google_parts(content: Any) -> list[dict[str, Any]]:
@@ -149,6 +202,11 @@ class GoogleAIStudioAdapter:
             generation_config["maxOutputTokens"] = payload["max_tokens"]
         if generation_config:
             body["generationConfig"] = generation_config
+        return body
+
+    async def chat(self, model: str, payload: dict[str, Any]) -> dict[str, Any]:
+        """Translate a basic text chat request and normalize the Gemini response."""
+        body = self._request_body(payload)
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 response = await client.post(
@@ -196,3 +254,57 @@ class GoogleAIStudioAdapter:
                 "total_tokens": prompt_tokens + completion_tokens,
             },
         }
+
+    async def chat_stream(
+        self, model: str, payload: dict[str, Any], on_delta: Callable[[str], Awaitable[None]]
+    ) -> dict[str, Any]:
+        """Relay Gemini text as it arrives, retaining final token usage."""
+        from app.providers.streaming import sse_json, text_completion
+
+        text: list[str] = []
+        usage: dict[str, Any] = {}
+        finish_reason: str | None = None
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                async with client.stream(
+                    "POST",
+                    f"{self.base_url}/models/{model}:streamGenerateContent",
+                    params={"key": self.api_key, "alt": "sse"},
+                    json=self._request_body(payload),
+                ) as response:
+                    _check_stream_status(response)
+                    async for chunk in sse_json(response):
+                        candidates = chunk.get("candidates") or []
+                        if candidates:
+                            candidate = candidates[0]
+                            for part in candidate.get("content", {}).get("parts", []):
+                                delta = part.get("text")
+                                if isinstance(delta, str) and not part.get("thought"):
+                                    text.append(delta)
+                                    await on_delta(delta)
+                            if candidate.get("finishReason"):
+                                finish_reason = str(candidate["finishReason"]).lower()
+                        metadata = chunk.get("usageMetadata")
+                        if isinstance(metadata, dict):
+                            usage = {
+                                "prompt_tokens": int(metadata.get("promptTokenCount", 0)),
+                                "completion_tokens": int(metadata.get("candidatesTokenCount", 0)),
+                                "total_tokens": int(metadata.get("totalTokenCount", 0)),
+                            }
+        except httpx.TimeoutException as exc:
+            raise ProviderError(504, "Provider timed out") from exc
+        except httpx.HTTPError as exc:
+            raise ProviderError(502, "Provider network error") from exc
+        except (ValueError, TypeError, AttributeError, KeyError, IndexError) as exc:
+            raise ProviderError(502, "Provider returned an invalid stream") from exc
+        return text_completion(model, "".join(text), usage, finish_reason)
+
+
+def _check_stream_status(response: httpx.Response) -> None:
+    """Normalize HTTP errors without exposing provider payloads or credentials."""
+    if response.is_error:
+        raise ProviderError(
+            response.status_code,
+            "Provider rejected the request",
+            parse_retry_after(response.headers.get("Retry-After")),
+        )

@@ -1,5 +1,6 @@
 """Database-backed model selection with provider fallback."""
 
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -82,8 +83,17 @@ async def complete_with_fallback(
     requested_model: str,
     payload: dict[str, Any],
     laya_client: httpx.AsyncClient | None = None,
+    *,
+    on_event: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
+    route_by_task: bool = False,
 ) -> tuple[dict[str, Any], Model, Provider, int]:
     """Try enabled, credentialed candidates in priority order."""
+
+    async def emit(event: str, **data: Any) -> None:
+        if on_event is not None:
+            await on_event({"event": event, **data})
+
+    await emit("routing", mode="auto" if requested_model == "auto" else "manual")
     result = await session.execute(
         select(Model, Provider)
         .join(Provider)
@@ -134,14 +144,12 @@ async def complete_with_fallback(
     ]
     routing_decision: RoutingDecision | None = None
     if (
-        settings.router_strategy == "laya"
-        and settings.laya_routing_mode != "off"
-        and requested_model == "auto"
-    ):
+        route_by_task or settings.router_strategy == "laya" and settings.laya_routing_mode != "off"
+    ) and requested_model == "auto":
         routing_decision = await classify_with_laya(
             laya_client, settings, payload.get("messages", [])
         )
-        if settings.laya_routing_mode == "active":
+        if route_by_task or settings.laya_routing_mode == "active":
             candidates = order_by_decision(candidates, routing_decision)
     elif settings.router_strategy == "weighted_round_robin":
         candidates = _weighted_order(candidates)
@@ -153,11 +161,12 @@ async def complete_with_fallback(
             "classifier": routing_decision.classifier,
             "classifier_ms": routing_decision.classifier_ms,
             "fallback": routing_decision.fallback,
-            "mode": settings.laya_routing_mode,
+            "mode": "active" if route_by_task else settings.laya_routing_mode,
         }
         if routing_decision is not None
         else None
     )
+    await emit("classified", routing=routing_trace, candidates=len(candidates))
     if not candidates:
         raise ProviderError(
             503, "No compatible model is currently available", routing=routing_trace
@@ -181,6 +190,7 @@ async def complete_with_fallback(
             )
         except QuotaExceeded as error:
             retry_after_values.append(error.retry_after)
+            await emit("unavailable", model=model.name, reason="quota")
             continue
         attempts += 1
         adapter: ProviderAdapter
@@ -201,8 +211,31 @@ async def complete_with_fallback(
             )
         else:
             continue
+        emitted_content = False
+
+        async def delta(
+            text: str, model_name: str = model.name, provider_slug: str = provider.slug
+        ) -> None:
+            nonlocal emitted_content
+            emitted_content = True
+            await emit("delta", text=text, model=model_name, provider=provider_slug)
+
+        await emit(
+            "selected",
+            model=model.name,
+            provider=provider.slug,
+            provider_name=provider.name,
+            attempt=attempts,
+            routing=routing_trace,
+            profile=model.routing_profile,
+            tasks=model.routing_tasks,
+        )
         try:
-            completion = await adapter.chat(model.name, payload)
+            await emit("requesting", model=model.name, provider=provider.slug, attempt=attempts)
+            if on_event is not None:
+                completion = await adapter.chat_stream(model.name, payload, delta)
+            else:
+                completion = await adapter.chat(model.name, payload)
             usage = completion.get("usage", {})
             actual_tokens = int(usage.get("total_tokens") or 0)
             if not actual_tokens:
@@ -246,6 +279,18 @@ async def complete_with_fallback(
                         seconds=settings.router_cooldown_default_seconds
                     )
             await session.commit()
+            if emitted_content:
+                # A retry must never combine responses from two different models.
+                error.attempts = attempts
+                error.routing = routing_trace
+                raise error
+            await emit(
+                "fallback",
+                model=model.name,
+                provider=provider.slug,
+                attempt=attempts,
+                status_code=error.status_code,
+            )
             if error.status_code == 400:
                 if any(
                     marker in error.message.lower()

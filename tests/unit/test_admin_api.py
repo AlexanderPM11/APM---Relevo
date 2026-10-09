@@ -38,6 +38,7 @@ async def api_client(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[AsyncClie
         poolclass=StaticPool,
     )
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    monkeypatch.setattr(api_routes, "SessionLocal", session_factory)
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
 
@@ -173,6 +174,27 @@ async def test_playground_chat_rejects_unknown_consumer_key(api_client: AsyncCli
             "model": "auto",
             "messages": [{"role": "user", "content": "Hola"}],
         },
+    )
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Active API key not found"
+
+
+@pytest.mark.asyncio
+async def test_playground_stream_requires_admin_and_active_consumer_key(
+    api_client: AsyncClient,
+) -> None:
+    """The event endpoint checks both the administrator and selected app key."""
+    payload = {
+        "api_key_id": 999,
+        "model": "auto",
+        "messages": [{"role": "user", "content": "Hola"}],
+    }
+    assert (await api_client.post("/admin/playground/chat/stream", json=payload)).status_code == 401
+    token = await admin_token(api_client)
+    response = await api_client.post(
+        "/admin/playground/chat/stream",
+        headers={"Authorization": f"Bearer {token}"},
+        json=payload,
     )
     assert response.status_code == 404
     assert response.json()["detail"] == "Active API key not found"

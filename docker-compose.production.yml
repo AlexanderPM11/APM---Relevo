@@ -1,0 +1,13 @@
+services:
+  app:
+    environment:
+      APP_ENV: production
+      ROUTER_STRATEGY: laya
+      LAYA_ROUTING_MODE: active
+      ROUTER_FREE_ONLY: "true"
+
+  laya:
+    environment:
+      LAYA_PRELOAD: "1"
+      LAYA_MODELS: multilingual
+      LAYA_DEFAULT_MODEL: multilingual

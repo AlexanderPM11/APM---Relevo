@@ -1,0 +1,9 @@
+export type PlaygroundModel = { id: string; name: string; alias: string | null; provider: string; provider_name: string; capabilities: string[] }
+export type PlaygroundKey = { id: number; name: string; prefix: string }
+export type PlaygroundCatalog = { api_keys: PlaygroundKey[]; models: PlaygroundModel[] }
+export type Attachment = { id: string; name: string; data_url: string }
+export type Routing = { task: string; complexity: string; confidence: number; classifier: string; classifier_ms: number; fallback?: string | null; mode: string }
+export type Completion = { choices?: { message?: { content?: string } }[]; usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number }; relevo?: { model: string; provider: string; attempts: number; routing?: Routing } }
+export type StreamEvent = { event: string; elapsed_ms?: number; mode?: string; routing?: Routing | null; model?: string; provider?: string; provider_name?: string; attempt?: number; profile?: string | null; tasks?: string[]; text?: string; candidates?: number; message?: string; reason?: string; status_code?: number; completion?: Completion }
+export type ChatEntry = { id: string; role: 'user' | 'assistant'; content: string; images: Attachment[]; status?: 'pending' | 'complete' | 'error' | 'stopped'; events?: StreamEvent[]; model?: string; provider?: string; attempts?: number; tokens?: number; elapsed_ms?: number; error?: string }
+export type Conversation = { id: string; title: string; updated: number; entries: ChatEntry[]; model: string; keyId: number | null }

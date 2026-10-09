@@ -1,5 +1,7 @@
 """HTTP adapter contract tests using simulated provider responses."""
 
+import json
+
 import httpx
 import pytest
 import respx
@@ -51,6 +53,103 @@ async def test_openai_compatible_adapter_normalizes_rate_limit() -> None:
     assert raised.value.status_code == 429
     assert raised.value.retry_after == 17
     assert "private" not in raised.value.message
+
+
+@pytest.mark.asyncio
+async def test_openai_compatible_adapter_streams_deltas_and_aggregates_usage() -> None:
+    """Provider chunks reach the UI callback and completion retains final usage."""
+    with respx.mock(assert_all_called=True) as mock:
+        route = mock.post("https://provider.example/v1/chat/completions").mock(
+            return_value=httpx.Response(
+                200,
+                headers={"Content-Type": "text/event-stream"},
+                content="\n\n".join(
+                    f"data: {json.dumps(frame)}"
+                    for frame in [
+                        {
+                            "choices": [
+                                {"index": 0, "delta": {"content": "Hola"}, "finish_reason": None}
+                            ]
+                        },
+                        {
+                            "choices": [
+                                {"index": 0, "delta": {"content": " mundo"}, "finish_reason": None}
+                            ]
+                        },
+                        {
+                            "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+                            "usage": {
+                                "prompt_tokens": 3,
+                                "completion_tokens": 2,
+                                "total_tokens": 5,
+                            },
+                        },
+                        "[DONE]",
+                    ]
+                )
+                + "\n\n",
+            )
+        )
+        adapter = OpenAICompatibleAdapter("https://provider.example/v1", "secret", 5)
+        deltas: list[str] = []
+
+        async def collect(delta: str) -> None:
+            deltas.append(delta)
+
+        result = await adapter.chat_stream("model-a", {"messages": []}, collect)
+
+    assert route.calls[0].request.headers["Authorization"] == "Bearer secret"
+    assert b'"stream":true' in route.calls[0].request.content
+    assert deltas == ["Hola", " mundo"]
+    assert result["choices"][0]["message"]["content"] == "Hola mundo"
+    assert result["usage"]["total_tokens"] == 5
+
+
+@pytest.mark.asyncio
+async def test_google_adapter_streams_text_and_converts_usage() -> None:
+    """Gemini SSE text is relayed as it arrives in one normalized completion."""
+    with respx.mock(assert_all_called=True) as mock:
+        route = mock.post(
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-test:streamGenerateContent"
+        ).mock(
+            return_value=httpx.Response(
+                200,
+                headers={"Content-Type": "text/event-stream"},
+                content="\n\n".join(
+                    f"data: {json.dumps(frame)}"
+                    for frame in [
+                        {"candidates": [{"content": {"parts": [{"text": "Hola"}]}}]},
+                        {
+                            "candidates": [
+                                {"content": {"parts": [{"text": " mundo"}]}, "finishReason": "STOP"}
+                            ],
+                            "usageMetadata": {
+                                "promptTokenCount": 3,
+                                "candidatesTokenCount": 2,
+                                "totalTokenCount": 5,
+                            },
+                        },
+                    ]
+                )
+                + "\n\n",
+            )
+        )
+        adapter = GoogleAIStudioAdapter(
+            "https://generativelanguage.googleapis.com/v1beta", "secret", 5
+        )
+        deltas: list[str] = []
+
+        async def collect(delta: str) -> None:
+            deltas.append(delta)
+
+        result = await adapter.chat_stream(
+            "gemini-test", {"messages": [{"role": "user", "content": "Hola"}]}, collect
+        )
+
+    assert "alt=sse" in str(route.calls[0].request.url)
+    assert deltas == ["Hola", " mundo"]
+    assert result["choices"][0]["message"]["content"] == "Hola mundo"
+    assert result["usage"]["total_tokens"] == 5
 
 
 @pytest.mark.asyncio

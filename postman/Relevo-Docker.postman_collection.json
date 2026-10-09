@@ -1,0 +1,90 @@
+{
+  "info": {
+    "_postman_id": "b0e26c81-4212-4bb2-bf55-31d77eb416c0",
+    "name": "Relevo API + Laya (Docker local)",
+    "description": "Pruebas de salud, login, clasificación aislada, API OpenAI compatible y rendimiento. El benchmark clasifica texto sin llamar a un modelo de chat.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "01 · Infraestructura",
+      "item": [
+        {
+          "name": "Health",
+          "request": { "method": "GET", "header": [], "url": "{{base_url}}/health" },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('API viva', () => pm.response.to.have.status(200));", "pm.expect(pm.response.json().status).to.eql('ok');"] } }]
+        },
+        {
+          "name": "Ready (DB y modelos disponibles)",
+          "request": { "method": "GET", "header": [], "url": "{{base_url}}/ready" },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('API preparada', () => pm.response.to.have.status(200));", "pm.test('Base y modelos disponibles', () => { const r = pm.response.json(); pm.expect(r.database).to.eql('ok'); pm.expect(r.models).to.eql('available'); });"] } }]
+        }
+      ]
+    },
+    {
+      "name": "02 · Preparar autenticación",
+      "item": [
+        {
+          "name": "Iniciar sesión de administrador",
+          "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"email\": \"{{admin_email}}\",\n  \"password\": \"{{admin_password}}\"\n}", "options": { "raw": { "language": "json" } } }, "url": "{{base_url}}/admin/auth/login" },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Login admin correcto', () => pm.response.to.have.status(200));", "const data = pm.response.json();", "pm.expect(data.access_token).to.be.a('string');", "pm.environment.set('admin_token', data.access_token);"] } }]
+        },
+        {
+          "name": "Crear clave de consumidor para pruebas",
+          "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{admin_token}}" }, { "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"name\": \"Postman local\",\n  \"owner\": \"Pruebas locales\",\n  \"requests_per_minute\": 60\n}", "options": { "raw": { "language": "json" } } }, "url": "{{base_url}}/admin/api-keys" },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Clave creada', () => pm.response.to.have.status(201));", "const data = pm.response.json();", "pm.environment.set('api_key', data.api_key);", "pm.environment.set('api_key_id', String(data.id));", "console.log('Clave de prueba guardada en el entorno local; no la compartas.');"] } }]
+        }
+      ]
+    },
+    {
+      "name": "03 · Clasificador Laya (sin modelo de chat)",
+      "item": [
+        {
+          "name": "Clasificar y medir una consulta",
+          "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{admin_token}}" }, { "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"text\": \"{{benchmark_text}}\"\n}", "options": { "raw": { "language": "json" } } }, "url": "{{base_url}}/admin/routing/classify" },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Clasificación HTTP correcta', () => pm.response.to.have.status(200));", "const d = pm.response.json();", "pm.test('Categoría válida', () => pm.expect(['conversation','writing','summarization','programming','reasoning','other']).to.include(d.task));", "pm.test('Dificultad válida', () => pm.expect(['simple','intermediate','complex']).to.include(d.complexity));", "pm.test('La respuesta informa el motor y los tiempos', () => { pm.expect(['laya','laya+rules','rules']).to.include(d.classifier); pm.expect(d.classifier_ms).to.be.a('number'); pm.expect(d.request_ms).to.be.a('number'); });", "pm.environment.set('last_task', d.task);", "pm.environment.set('last_complexity', d.complexity);", "pm.environment.set('last_classifier', d.classifier);", "pm.environment.set('last_classifier_ms', String(d.classifier_ms));", "pm.environment.set('last_api_ms', String(pm.response.responseTime));", "const samples = JSON.parse(pm.environment.get('benchmark_samples') || '[]');", "samples.push({ classifier_ms: d.classifier_ms, api_ms: pm.response.responseTime, fallback: d.classifier !== 'laya' });", "pm.environment.set('benchmark_samples', JSON.stringify(samples));", "const sorted = (key) => samples.map(x => x[key]).sort((a,b) => a-b);", "const pct = (values, p) => values.length ? values[Math.min(values.length-1, Math.ceil(values.length*p)-1)] : null;", "const c = sorted('classifier_ms'); const a = sorted('api_ms');", "const avg = values => values.length ? Math.round(values.reduce((s,v) => s+v,0)/values.length) : null;", "const summary = { samples: samples.length, classifier_avg_ms: avg(c), classifier_p50_ms: pct(c,.50), classifier_p95_ms: pct(c,.95), api_avg_ms: avg(a), api_p50_ms: pct(a,.50), api_p95_ms: pct(a,.95), fallback_count: samples.filter(x=>x.fallback).length };", "pm.environment.set('benchmark_summary', JSON.stringify(summary));", "console.log('Benchmark acumulado:', summary);"] } }]
+        },
+        {
+          "name": "Reiniciar mediciones (una vez antes del Runner)",
+          "request": { "method": "GET", "header": [], "url": "{{base_url}}/health" },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.environment.set('benchmark_samples', '[]');", "pm.environment.unset('benchmark_summary');", "pm.test('Métricas reiniciadas', () => pm.response.to.have.status(200));"] } }]
+        }
+      ]
+    },
+    {
+      "name": "04 · API compatible OpenAI",
+      "item": [
+        {
+          "name": "Listar modelos habilitados",
+          "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{api_key}}" }], "url": "{{base_url}}/v1/models" },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Catálogo accesible', () => pm.response.to.have.status(200));", "const d = pm.response.json(); pm.expect(d.object).to.eql('list'); pm.expect(d.data).to.be.an('array');", "console.log('Modelos publicados:', d.data.length);"] } }]
+        },
+        {
+          "name": "Chat auto · simple / traducción",
+          "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{api_key}}" }, { "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"model\": \"auto\",\n  \"messages\": [{\"role\": \"user\", \"content\": \"Traduce al inglés: buenos días\"}],\n  \"max_tokens\": 100\n}", "options": { "raw": { "language": "json" } } }, "url": "{{base_url}}/v1/chat/completions" },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Chat respondió', () => pm.response.to.have.status(200));", "const d = pm.response.json(); pm.expect(d.choices).to.be.an('array').that.is.not.empty;", "pm.test('Traza del router disponible', () => { pm.expect(d.relevo).to.be.an('object'); pm.expect(d.relevo.routing).to.be.an('object'); });", "if (d.relevo && d.relevo.routing) console.log('Selección:', d.relevo, 'tiempo HTTP:', pm.response.responseTime, 'ms');"] } }]
+        },
+        {
+          "name": "Chat auto · programación / análisis",
+          "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{api_key}}" }, { "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"model\": \"auto\",\n  \"messages\": [{\"role\": \"user\", \"content\": \"Revisa esta función Python, explica el error y propone una corrección con un caso límite: def average(xs): return sum(xs) / len(xs)\"}],\n  \"max_tokens\": 300\n}", "options": { "raw": { "language": "json" } } }, "url": "{{base_url}}/v1/chat/completions" },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Chat respondió', () => pm.response.to.have.status(200));", "const d = pm.response.json(); pm.expect(d.choices).to.be.an('array').that.is.not.empty;", "console.log('Traza:', d.relevo, 'tiempo HTTP:', pm.response.responseTime, 'ms');"] } }]
+        }
+      ]
+    },
+    {
+      "name": "05 · Observabilidad y limpieza",
+      "item": [
+        {
+          "name": "Estadísticas de solicitudes y latencia",
+          "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{admin_token}}" }], "url": "{{base_url}}/admin/stats" },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Estadísticas disponibles', () => pm.response.to.have.status(200));", "const d=pm.response.json(); console.log({requests:d.requests,success_rate:d.success_rate,latency_p50_ms:d.latency_p50_ms,latency_p95_ms:d.latency_p95_ms,fallbacks:d.fallbacks});"] } }]
+        },
+        {
+          "name": "Revocar clave temporal (opcional)",
+          "request": { "method": "DELETE", "header": [{ "key": "Authorization", "value": "Bearer {{admin_token}}" }], "url": "{{base_url}}/admin/api-keys/{{api_key_id}}" },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Clave revocada', () => pm.response.to.have.status(204));", "pm.environment.unset('api_key');", "pm.environment.unset('api_key_id');"] } }]
+        }
+      ]
+    }
+  ]
+}
