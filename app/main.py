@@ -1,7 +1,8 @@
 """FastAPI application entry point."""
 
+import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -19,6 +20,7 @@ from app.core.seed import load_seed
 from app.db.base import Base
 from app.db.models import AdminUser
 from app.db.session import SessionLocal, engine
+from app.router.maintenance import maintenance_loop
 
 
 @asynccontextmanager
@@ -40,9 +42,13 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
                 await session.commit()
         await load_seed(session, settings)
     app.state.laya_client = httpx.AsyncClient()
+    maintenance_task = asyncio.create_task(maintenance_loop(SessionLocal, interval_seconds=60.0))
     try:
         yield
     finally:
+        maintenance_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await maintenance_task
         await app.state.laya_client.aclose()
         await engine.dispose()
 

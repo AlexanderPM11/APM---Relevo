@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import time
+import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import suppress
 from datetime import UTC, datetime
@@ -106,6 +107,228 @@ def admin_guard() -> Any:
     return Depends(require_admin)
 
 
+async def _public_chat_stream(
+    request: ChatCompletionRequest,
+    http_request: Request,
+    api_key: ApiKey,
+) -> StreamingResponse:
+    """Stream OpenAI-compatible chunks with fallback support prior to first byte."""
+    settings = get_settings()
+    payload = request.model_dump(exclude={"model", "stream"}, exclude_none=True)
+    started = time.monotonic()
+    completion_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
+    created_ts = int(time.time())
+
+    queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue(maxsize=64)
+    selected_meta: dict[str, str] = {}
+
+    async def emit(event: dict[str, Any]) -> None:
+        await queue.put(event)
+
+    async def run() -> None:
+        try:
+            async with SessionLocal() as stream_session:
+                try:
+                    completion, model, provider, attempts = await complete_with_fallback(
+                        stream_session,
+                        settings,
+                        request.model,
+                        payload,
+                        getattr(http_request.app.state, "laya_client", None),
+                        on_event=emit,
+                    )
+                    usage = completion.get("usage", {})
+                    routing = completion.pop("_relevo_routing", None)
+                    stream_session.add(
+                        RequestLog(
+                            api_key_id=api_key.id,
+                            requested_model=request.model,
+                            final_model=model.name,
+                            attempts=attempts,
+                            status="success",
+                            latency_ms=int((time.monotonic() - started) * 1000),
+                            input_tokens=int(usage.get("prompt_tokens", 0)),
+                            output_tokens=int(usage.get("completion_tokens", 0)),
+                            routing_task=routing.get("task") if routing else None,
+                            routing_complexity=routing.get("complexity") if routing else None,
+                            routing_confidence=routing.get("confidence") if routing else None,
+                            routing_mode=routing.get("mode") if routing else None,
+                            routing_classifier_ms=(
+                                routing.get("classifier_ms") if routing else None
+                            ),
+                        )
+                    )
+                    await stream_session.commit()
+                    await queue.put(
+                        {
+                            "event": "done",
+                            "model": model.name,
+                            "provider": provider.slug,
+                            "attempts": attempts,
+                            "usage": usage,
+                        }
+                    )
+                except ProviderError as error:
+                    stream_session.add(
+                        RequestLog(
+                            api_key_id=api_key.id,
+                            requested_model=request.model,
+                            attempts=error.attempts,
+                            status="error",
+                            latency_ms=int((time.monotonic() - started) * 1000),
+                            error_code=f"upstream_{error.status_code}",
+                            routing_task=error.routing.get("task") if error.routing else None,
+                            routing_complexity=(
+                                error.routing.get("complexity") if error.routing else None
+                            ),
+                            routing_confidence=(
+                                error.routing.get("confidence") if error.routing else None
+                            ),
+                            routing_mode=error.routing.get("mode") if error.routing else None,
+                            routing_classifier_ms=(
+                                error.routing.get("classifier_ms") if error.routing else None
+                            ),
+                        )
+                    )
+                    await stream_session.commit()
+                    await queue.put({"event": "error", "error": error})
+                except asyncio.CancelledError:
+                    await stream_session.rollback()
+                    stream_session.add(
+                        RequestLog(
+                            api_key_id=api_key.id,
+                            requested_model=request.model,
+                            status="cancelled",
+                            error_code="client_disconnected",
+                            latency_ms=int((time.monotonic() - started) * 1000),
+                        )
+                    )
+                    await stream_session.commit()
+                    raise
+                except Exception as exc:
+                    logging.getLogger(__name__).exception("Public chat stream error")
+                    await queue.put({"event": "error", "error": exc})
+        except asyncio.CancelledError:
+            raise
+        finally:
+            await queue.put(None)
+
+    task = asyncio.create_task(run())
+
+    first_item = await queue.get()
+    while first_item is not None and first_item.get("event") not in (
+        "delta",
+        "done",
+        "error",
+    ):
+        if first_item.get("event") == "selected":
+            selected_meta["model"] = str(first_item.get("model", ""))
+            selected_meta["provider"] = str(first_item.get("provider", ""))
+            selected_meta["attempts"] = str(first_item.get("attempt", 1))
+        first_item = await queue.get()
+
+    if first_item is None:
+        raise HTTPException(502, "Provider returned an empty stream")
+
+    if first_item.get("event") == "error":
+        err = first_item["error"]
+        if isinstance(err, ProviderError):
+            headers = {
+                "Retry-After": str(err.retry_after or settings.router_cooldown_default_seconds)
+            }
+            raise HTTPException(err.status_code, err.message, headers=headers)
+        raise HTTPException(500, "Internal streaming error")
+
+    async def event_generator() -> AsyncIterator[str]:
+        current_model = selected_meta.get("model") or request.model
+        try:
+            if first_item.get("event") == "delta":
+                text = first_item.get("text", "")
+                chunk = {
+                    "id": completion_id,
+                    "object": "chat.completion.chunk",
+                    "created": created_ts,
+                    "model": current_model,
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {"role": "assistant", "content": text},
+                            "finish_reason": None,
+                        }
+                    ],
+                }
+                yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+
+            while True:
+                item = await queue.get()
+                if item is None:
+                    break
+                event_type = item.get("event")
+                if event_type == "delta":
+                    text = item.get("text", "")
+                    chunk = {
+                        "id": completion_id,
+                        "object": "chat.completion.chunk",
+                        "created": created_ts,
+                        "model": current_model,
+                        "choices": [
+                            {
+                                "index": 0,
+                                "delta": {"content": text},
+                                "finish_reason": None,
+                            }
+                        ],
+                    }
+                    yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+                elif event_type == "done":
+                    stop_chunk: dict[str, Any] = {
+                        "id": completion_id,
+                        "object": "chat.completion.chunk",
+                        "created": created_ts,
+                        "model": current_model,
+                        "choices": [
+                            {
+                                "index": 0,
+                                "delta": {},
+                                "finish_reason": "stop",
+                            }
+                        ],
+                    }
+                    if item.get("usage"):
+                        stop_chunk["usage"] = item["usage"]
+                    yield f"data: {json.dumps(stop_chunk, ensure_ascii=False)}\n\n"
+                    yield "data: [DONE]\n\n"
+                    break
+                elif event_type == "error":
+                    err = item["error"]
+                    err_msg = err.message if isinstance(err, ProviderError) else "Stream error"
+                    err_frame = {"error": {"message": err_msg, "type": "upstream_error"}}
+                    yield f"data: {json.dumps(err_frame, ensure_ascii=False)}\n\n"
+                    break
+        finally:
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
+
+    response_headers = {
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no",
+    }
+    if "model" in selected_meta:
+        response_headers["X-Relevo-Model"] = selected_meta["model"]
+    if "provider" in selected_meta:
+        response_headers["X-Relevo-Provider"] = selected_meta["provider"]
+    if "attempts" in selected_meta:
+        response_headers["X-Relevo-Attempts"] = selected_meta["attempts"]
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers=response_headers,
+    )
+
+
 @router.post("/v1/chat/completions")
 async def chat_completions(
     request: ChatCompletionRequest,
@@ -113,10 +336,10 @@ async def chat_completions(
     http_request: Request,
     session: SessionDep,
     api_key: Annotated[ApiKey, Depends(require_api_key)],
-) -> dict[str, Any]:
+) -> Any:
     """Route a chat request through available provider models."""
     if request.stream:
-        raise HTTPException(501, "Streaming support is not available yet")
+        return await _public_chat_stream(request, http_request, api_key)
     settings = get_settings()
     payload = request.model_dump(exclude={"model", "stream"}, exclude_none=True)
     started = time.monotonic()

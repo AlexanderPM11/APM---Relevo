@@ -71,7 +71,7 @@ async def admin_token(client: AsyncClient) -> str:
         json={"email": "admin@example.com", "password": "test-admin-password"},
     )
     assert response.status_code == 200
-    return response.json()["access_token"]
+    return str(response.json()["access_token"])
 
 
 @pytest.mark.asyncio

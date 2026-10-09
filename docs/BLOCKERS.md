@@ -4,4 +4,5 @@
 - CI de GitHub y el release `v1.0.0` requieren acceso al repositorio remoto, no disponible desde este entorno.
 - La API inicia y `/health` responde correctamente; `/ready` devuelve 503 mientras no haya al menos una credencial de proveedor configurada.
 - La batería actual de pruebas pasa en un contenedor Linux. Ruff y mypy también pasan localmente.
-- Siguen pendientes las integraciones completas y verificadas de streaming, sondeo periódico de salud, pruebas de carga, auditoría de dependencias, cobertura objetivo y despliegue en Dokploy.
+- Las integraciones de streaming SSE (T7.2) con fallback previo al primer byte (T6.7) y la tarea periódica de sondeo y limpieza de cuotas (T8.4) han sido implementadas y verificadas con pruebas automatizadas (`test_chat_streaming.py` y `test_maintenance.py`).
+- Siguen pendientes: pruebas de carga (`locust`/`k6`), auditoría de dependencias (`pip-audit`), despliegue final y verificación en Dokploy.

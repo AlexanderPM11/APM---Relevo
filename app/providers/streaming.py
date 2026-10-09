@@ -20,11 +20,13 @@ async def sse_json(response: httpx.Response) -> AsyncIterator[dict[str, Any]]:
         elif not line and data:
             raw = "\n".join(data)
             data.clear()
-            if raw == "[DONE]":
+            if raw.strip() in ("[DONE]", '"[DONE]"'):
                 return
             yield _decode(raw)
-    if data and "\n".join(data) != "[DONE]":
-        yield _decode("\n".join(data))
+    if data:
+        tail = "\n".join(data).strip()
+        if tail not in ("[DONE]", '"[DONE]"'):
+            yield _decode("\n".join(data))
 
 
 def _decode(raw: str) -> dict[str, Any]:

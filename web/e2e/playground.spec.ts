@@ -2,7 +2,6 @@ import { expect, test } from '@playwright/test'
 
 test('automatic and manual modes stream routing, provider output and saved chat history', async ({ page }) => {
   const routing = { task: 'reasoning', complexity: 'complex', confidence: 0.89, classifier: 'laya', classifier_ms: 63, fallback: null, mode: 'active' }
-  const completion = { choices: [{ message: { content: 'Prepararía el plan en tres pasos.' } }], usage: { prompt_tokens: 28, completion_tokens: 12, total_tokens: 40 }, relevo: { model: 'overture-reasoning', provider: 'demo-provider', attempts: 1, routing } }
   const automaticStream = [
     { event: 'routing', elapsed_ms: 1, mode: 'auto' },
     { event: 'classified', elapsed_ms: 65, candidates: 2, routing },

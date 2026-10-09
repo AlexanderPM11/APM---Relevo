@@ -9,17 +9,37 @@ import httpx
 from app.core.config import Settings
 
 TASKS: dict[str, str] = {
-    "conversation": "Preguntas, charla o consejos generales. No la uses para solicitudes concretas de un plan.",
-    "writing": "Redactar, editar, traducir o cambiar el tono de un texto; por ejemplo, traducir una frase.",
+    "conversation": (
+        "Preguntas, charla o consejos generales. No la uses para solicitudes concretas de un plan."
+    ),
+    "writing": (
+        "Redactar, editar, traducir o cambiar el tono de un texto; por ejemplo, traducir una frase."
+    ),
     "summarization": "Resumir, extraer datos u organizar información ya proporcionada.",
-    "programming": "La petición principal trata de código fuente, funciones, errores de software o pruebas de código. Una API mencionada en un plan no significa programación.",
-    "reasoning": "La petición principal es analizar, planificar o decidir con varios pasos; por ejemplo, plan de migración, riesgos, dependencias o alternativas. No requiere que la tarea sea de código.",
+    "programming": (
+        "La petición principal trata de código fuente, funciones, errores de software o pruebas"
+        " de código. Una API mencionada en un plan no significa programación."
+    ),
+    "reasoning": (
+        "La petición principal es analizar, planificar o decidir con varios pasos; por ejemplo,"
+        " plan de migración, riesgos, dependencias o alternativas. No requiere que la tarea sea"
+        " de código."
+    ),
     "other": "Tarea concreta que no encaja en las demás categorías.",
 }
 COMPLEXITIES: dict[str, str] = {
-    "simple": "Una sola acción directa, como traducir una frase o responder un dato. No la uses solo porque el mensaje sea corto.",
-    "intermediate": "Dos o tres pasos relacionados y acotados, como resumir y ordenar información o corregir un error sencillo.",
-    "complex": "Plan multietapa con varias dependencias o restricciones, evaluar riesgos y alternativas, diseñar una migración o resolver un problema difícil.",
+    "simple": (
+        "Una sola acción directa, como traducir una frase o responder un dato. No la uses solo"
+        " porque el mensaje sea corto."
+    ),
+    "intermediate": (
+        "Dos o tres pasos relacionados y acotados, como resumir y ordenar información o corregir"
+        " un error sencillo."
+    ),
+    "complex": (
+        "Plan multietapa con varias dependencias o restricciones, evaluar riesgos y"
+        " alternativas, diseñar una migración o resolver un problema difícil."
+    ),
 }
 PROFILE_LEVEL = {"light": 1, "balanced": 2, "advanced": 3}
 
@@ -68,18 +88,39 @@ def _rule_task(state: str) -> str | None:
     lowered = state.lower()
     if any(term in lowered for term in ("resume", "resumen", "summarize", "summary", "extract")):
         return "summarization"
-    if any(term in lowered for term in ("traduce", "traducir", "traducción", "translate", "redacta")):
+    if any(
+        term in lowered for term in ("traduce", "traducir", "traducción", "translate", "redacta")
+    ):
         return "writing"
     code_signals = (
-        "```", "def ", "class ", "stack trace", "traceback", "exception",
-        "depura", "debug", "corrige el bug", "error de sintaxis", "revisa esta función",
+        "```",
+        "def ",
+        "class ",
+        "stack trace",
+        "traceback",
+        "exception",
+        "depura",
+        "debug",
+        "corrige el bug",
+        "error de sintaxis",
+        "revisa esta función",
     )
     if any(term in lowered for term in code_signals):
         return "programming"
     planning_signals = (
-        "planifica", "planificar", "plan de ", "migración", "migracion",
-        "dependencias", "riesgos", "reversión", "reversion", "alternativas",
-        "compara opciones", "evalúa opciones", "evalua opciones",
+        "planifica",
+        "planificar",
+        "plan de ",
+        "migración",
+        "migracion",
+        "dependencias",
+        "riesgos",
+        "reversión",
+        "reversion",
+        "alternativas",
+        "compara opciones",
+        "evalúa opciones",
+        "evalua opciones",
     )
     if any(term in lowered for term in planning_signals):
         return "reasoning"
@@ -90,16 +131,31 @@ def _rule_complexity(state: str) -> str:
     """Estimate workload from explicit multi-step signals, independent of text size."""
     lowered = state.lower()
     complex_signals = (
-        "migración", "migracion", "varios servicios", "varias dependencias",
-        "riesgos", "reversión", "reversion", "alternativas", "restricciones",
-        "paso a paso", "plan multietapa", "planifica una migración",
+        "migración",
+        "migracion",
+        "varios servicios",
+        "varias dependencias",
+        "riesgos",
+        "reversión",
+        "reversion",
+        "alternativas",
+        "restricciones",
+        "paso a paso",
+        "plan multietapa",
+        "planifica una migración",
         "planifica una migracion",
     )
     if sum(term in lowered for term in complex_signals) >= 2:
         return "complex"
     multi_step_signals = (
-        "incluye", "conserva", "explica", "propone", "caso de prueba",
-        "tres viñetas", "three bullets", "and a ",
+        "incluye",
+        "conserva",
+        "explica",
+        "propone",
+        "caso de prueba",
+        "tres viñetas",
+        "three bullets",
+        "and a ",
     )
     if len(state) >= 120 or sum(term in lowered for term in multi_step_signals) >= 2:
         return "intermediate"
@@ -131,12 +187,21 @@ async def classify_with_laya(
         "questions": {
             "task": {
                 "type": "choice",
-                "instructions": "Clasifica la acción que el usuario quiere que hagas, no los temas que menciona. Si pide planificar, analizar riesgos o comparar opciones, usa reasoning aunque mencione software o APIs. Solo usa programming si pide trabajar directamente sobre código.",
+                "instructions": (
+                    "Clasifica la acción que el usuario quiere que hagas, no los temas que"
+                    " menciona. Si pide planificar, analizar riesgos o comparar opciones, usa"
+                    " reasoning aunque mencione software o APIs. Solo usa programming si pide"
+                    " trabajar directamente sobre código."
+                ),
                 "criteria": TASKS,
             },
             "complexity": {
                 "type": "choice",
-                "instructions": "Clasifica el trabajo solicitado, no el tamaño del texto. Reserva simple para una única acción breve; un plan con dependencias, riesgos, varios servicios y reversión es complex.",
+                "instructions": (
+                    "Clasifica el trabajo solicitado, no el tamaño del texto. Reserva simple para"
+                    " una única acción breve; un plan con dependencias, riesgos, varios servicios"
+                    " y reversión es complex."
+                ),
                 "criteria": COMPLEXITIES,
             },
         },

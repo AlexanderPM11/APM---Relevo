@@ -38,7 +38,7 @@ export function ModelPicker({ models, value, onChange, disabled, loading, onRefr
     {open && <section id={id} className="pg-model-popover" role="dialog" aria-label="Elegir modo y modelo" onKeyDown={(event) => {
       if (event.key === 'Escape') { event.preventDefault(); close() }
       if (event.key === 'Tab') {
-        const elements = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('button:not([disabled]),input'))
+        const elements = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('button:not([disabled]):not([tabindex="-1"]),input:not([disabled])'))
         if (event.shiftKey && document.activeElement === elements[0]) { event.preventDefault(); elements.at(-1)?.focus() }
         else if (!event.shiftKey && document.activeElement === elements.at(-1)) { event.preventDefault(); elements[0]?.focus() }
       }
