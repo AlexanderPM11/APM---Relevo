@@ -82,6 +82,9 @@ class ModelInput(BaseModel):
     capabilities: list[str] = Field(default_factory=lambda: ["text"])
     is_enabled: bool = True
     tier: int = 3
+    is_free: bool | None = None
+    routing_profile: str | None = Field(default=None, pattern="^(light|balanced|advanced)$")
+    routing_tasks: list[str] = Field(default_factory=list)
     model_config = ConfigDict(extra="forbid")
 
 
@@ -94,6 +97,7 @@ def admin_guard() -> Any:
 async def chat_completions(
     request: ChatCompletionRequest,
     response: Response,
+    http_request: Request,
     session: SessionDep,
     api_key: Annotated[ApiKey, Depends(require_api_key)],
 ) -> dict[str, Any]:
@@ -105,7 +109,7 @@ async def chat_completions(
     started = time.monotonic()
     try:
         completion, model, provider, attempts = await complete_with_fallback(
-            session, settings, request.model, payload
+            session, settings, request.model, payload, http_request.app.state.laya_client
         )
     except ProviderError as error:
         session.add(
@@ -116,6 +120,11 @@ async def chat_completions(
                 status="error",
                 latency_ms=int((time.monotonic() - started) * 1000),
                 error_code=f"upstream_{error.status_code}",
+                routing_task=error.routing.get("task") if error.routing else None,
+                routing_complexity=error.routing.get("complexity") if error.routing else None,
+                routing_confidence=error.routing.get("confidence") if error.routing else None,
+                routing_mode=error.routing.get("mode") if error.routing else None,
+                routing_classifier_ms=error.routing.get("classifier_ms") if error.routing else None,
             )
         )
         await session.commit()
@@ -127,6 +136,7 @@ async def chat_completions(
     response.headers["X-Relevo-Provider"] = provider.slug
     response.headers["X-Relevo-Attempts"] = str(attempts)
     usage = completion.get("usage", {})
+    routing = completion.pop("_relevo_routing", None)
     session.add(
         RequestLog(
             api_key_id=api_key.id,
@@ -137,6 +147,11 @@ async def chat_completions(
             latency_ms=int((time.monotonic() - started) * 1000),
             input_tokens=int(usage.get("prompt_tokens", 0)),
             output_tokens=int(usage.get("completion_tokens", 0)),
+            routing_task=routing.get("task") if routing else None,
+            routing_complexity=routing.get("complexity") if routing else None,
+            routing_confidence=routing.get("confidence") if routing else None,
+            routing_mode=routing.get("mode") if routing else None,
+            routing_classifier_ms=routing.get("classifier_ms") if routing else None,
         )
     )
     await session.commit()
@@ -147,6 +162,7 @@ async def chat_completions(
         "model": model.name,
         "provider": provider.slug,
         "attempts": attempts,
+        **({"routing": routing} if routing else {}),
     }
     return completion
 
@@ -180,7 +196,7 @@ async def available_models(
 
 @router.post("/admin/playground/chat", dependencies=[admin_guard()])
 async def playground_chat(
-    body: PlaygroundChatRequest, response: Response, session: SessionDep
+    body: PlaygroundChatRequest, response: Response, http_request: Request, session: SessionDep
 ) -> dict[str, Any]:
     """Run a real chat from the console, applying the selected key's limits and usage log."""
     api_key = await session.get(ApiKey, body.api_key_id)
@@ -199,7 +215,7 @@ async def playground_chat(
     started = time.monotonic()
     try:
         completion, model, provider, attempts = await complete_with_fallback(
-            session, settings, body.model, payload
+            session, settings, body.model, payload, http_request.app.state.laya_client
         )
     except ProviderError as error:
         session.add(
@@ -210,11 +226,17 @@ async def playground_chat(
                 status="error",
                 latency_ms=int((time.monotonic() - started) * 1000),
                 error_code=f"upstream_{error.status_code}",
+                routing_task=error.routing.get("task") if error.routing else None,
+                routing_complexity=error.routing.get("complexity") if error.routing else None,
+                routing_confidence=error.routing.get("confidence") if error.routing else None,
+                routing_mode=error.routing.get("mode") if error.routing else None,
+                routing_classifier_ms=error.routing.get("classifier_ms") if error.routing else None,
             )
         )
         await session.commit()
         raise HTTPException(error.status_code, error.message) from error
     usage = completion.get("usage", {})
+    routing = completion.pop("_relevo_routing", None)
     session.add(
         RequestLog(
             api_key_id=api_key.id,
@@ -225,6 +247,11 @@ async def playground_chat(
             latency_ms=int((time.monotonic() - started) * 1000),
             input_tokens=int(usage.get("prompt_tokens", 0)),
             output_tokens=int(usage.get("completion_tokens", 0)),
+            routing_task=routing.get("task") if routing else None,
+            routing_complexity=routing.get("complexity") if routing else None,
+            routing_confidence=routing.get("confidence") if routing else None,
+            routing_mode=routing.get("mode") if routing else None,
+            routing_classifier_ms=routing.get("classifier_ms") if routing else None,
         )
     )
     await session.commit()
@@ -232,7 +259,12 @@ async def playground_chat(
     response.headers["X-Relevo-Provider"] = provider.slug
     response.headers["X-Relevo-Attempts"] = str(attempts)
     completion["model"] = body.model if body.model != "auto" else model.alias or model.name
-    completion["relevo"] = {"model": model.name, "provider": provider.slug, "attempts": attempts}
+    completion["relevo"] = {
+        "model": model.name,
+        "provider": provider.slug,
+        "attempts": attempts,
+        **({"routing": routing} if routing else {}),
+    }
     return completion
 
 
@@ -345,8 +377,15 @@ async def list_admin_models(session: SessionDep) -> list[dict[str, Any]]:
             "name": model.name,
             "alias": model.alias,
             "priority": model.priority,
+            "weight": model.weight,
+            "context_max": model.context_max,
+            "capabilities": model.capabilities,
             "tier": model.tier,
             "is_enabled": model.is_enabled,
+            "is_free": model.is_free,
+            "free_verified_at": model.free_verified_at,
+            "routing_profile": model.routing_profile,
+            "routing_tasks": model.routing_tasks,
         }
         for model in result.scalars()
     ]
@@ -429,6 +468,8 @@ async def create_model(body: ModelInput, session: SessionDep) -> dict[str, Any]:
     if await session.get(Provider, body.provider_id) is None:
         raise HTTPException(404, "Provider not found")
     model = Model(**body.model_dump())
+    if model.is_free is not None:
+        model.free_verified_at = datetime.now(UTC).replace(tzinfo=None)
     session.add(model)
     await session.commit()
     return {"id": model.id, "name": model.name}
@@ -442,10 +483,22 @@ async def update_model(model_id: int, body: ModelInput, session: SessionDep) -> 
         raise HTTPException(404, "Model not found")
     if await session.get(Provider, body.provider_id) is None:
         raise HTTPException(404, "Provider not found")
-    for field, value in body.model_dump().items():
+    updates = body.model_dump(exclude_unset=True)
+    for field, value in updates.items():
         setattr(model, field, value)
+    if "is_free" in updates:
+        model.free_verified_at = (
+            datetime.now(UTC).replace(tzinfo=None) if body.is_free is not None else None
+        )
     await session.commit()
-    return {"id": model.id, "name": model.name, "is_enabled": model.is_enabled}
+    return {
+        "id": model.id,
+        "name": model.name,
+        "is_enabled": model.is_enabled,
+        "is_free": model.is_free,
+        "routing_profile": model.routing_profile,
+        "routing_tasks": model.routing_tasks,
+    }
 
 
 @router.delete("/admin/models/{model_id}", dependencies=[admin_guard()], status_code=204)

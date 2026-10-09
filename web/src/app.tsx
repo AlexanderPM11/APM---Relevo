@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import './styles.css'
 import './styles/globals.css'
 import './theme.css'
+import { RoutingModels } from './routing-models'
 
 type ApiKey = { id: number; name: string; prefix: string; owner: string | null; is_active: boolean; requests_per_minute: number }
 type CreatedKey = { id: number; name: string; prefix: string; api_key: string }
@@ -115,7 +116,7 @@ export function App() {
   const [createOpen, setCreateOpen] = useState(false)
   const [confirmRevoke, setConfirmRevoke] = useState<ApiKey | null>(null)
   const [search, setSearch] = useState('')
-  const [tab, setTab] = useState<'summary' | 'keys' | 'connect' | 'examples'>(() => location.pathname === '/' ? 'summary' : location.pathname.startsWith('/connect') ? 'connect' : location.pathname.startsWith('/playground') ? 'examples' : 'keys')
+  const [tab, setTab] = useState<'summary' | 'keys' | 'connect' | 'examples' | 'models'>(() => location.pathname === '/' ? 'summary' : location.pathname.startsWith('/connect') ? 'connect' : location.pathname.startsWith('/playground') ? 'examples' : location.pathname.startsWith('/models') ? 'models' : 'keys')
   const [playgroundCatalog, setPlaygroundCatalog] = useState<PlaygroundCatalog>({ api_keys: [], models: [] })
   const [catalogLoading, setCatalogLoading] = useState(false)
   const [catalogUpdated, setCatalogUpdated] = useState<Date | null>(null)
@@ -144,9 +145,9 @@ export function App() {
   }, [createOpen])
 
   useEffect(() => {
-    const nextTab = location.pathname === '/' ? 'summary' : location.pathname.startsWith('/connect') ? 'connect' : location.pathname.startsWith('/playground') ? 'examples' : 'keys'
+    const nextTab = location.pathname === '/' ? 'summary' : location.pathname.startsWith('/connect') ? 'connect' : location.pathname.startsWith('/playground') ? 'examples' : location.pathname.startsWith('/models') ? 'models' : 'keys'
     setTab(nextTab)
-    document.title = location.pathname === '/login' ? 'Acceso · Relevo' : `${nextTab === 'summary' ? 'Resumen' : nextTab === 'keys' ? 'Claves API' : nextTab === 'connect' ? 'Conectar una app' : 'Playground'} · Relevo`
+    document.title = location.pathname === '/login' ? 'Acceso · Relevo' : `${nextTab === 'summary' ? 'Resumen' : nextTab === 'keys' ? 'Claves API' : nextTab === 'connect' ? 'Conectar una app' : nextTab === 'models' ? 'Modelos' : 'Playground'} · Relevo`
   }, [location.pathname])
 
   useEffect(() => {
@@ -247,6 +248,7 @@ export function App() {
   const commands = [
     { label: 'Ir a Resumen', hint: 'Navegación', run: () => navigate('/') },
     { label: 'Ir a Claves API', hint: 'Navegación', run: () => navigate('/keys') },
+    { label: 'Ir a Modelos', hint: 'Enrutamiento', run: () => navigate('/models') },
     { label: 'Crear una clave', hint: 'Acción', run: () => { dialogReturnFocus.current = document.activeElement as HTMLElement; setCreateOpen(true) } },
     { label: 'Ir a Playground', hint: 'Navegación', run: () => navigate('/playground') },
     { label: 'Ir a Conectar una app', hint: 'Navegación', run: () => navigate('/connect') },
@@ -307,6 +309,7 @@ export function App() {
       <button className={`nav-item ${tab === 'keys' ? 'active' : ''}`} onClick={() => navigate('/keys')}><Icon name="key"/><span>Claves API</span><span className="nav-count">{activeCount}</span></button>
       <button className={`nav-item ${tab === 'connect' ? 'active' : ''}`} onClick={() => navigate('/connect')}><Icon name="code"/><span>Conectar una app</span></button>
       <button className={`nav-item ${tab === 'examples' ? 'active' : ''}`} onClick={() => navigate('/playground')}><Icon name="code"/><span>Playground</span></button>
+      <button className={`nav-item ${tab === 'models' ? 'active' : ''}`} onClick={() => navigate('/models')}><Icon name="code"/><span>Modelos</span></button>
       <button className="mobile-logout icon-button subtle" title="Cerrar sesión" aria-label="Cerrar sesión" onClick={signOut}><Icon name="logout" size={17}/></button>
       <div className="sidebar-bottom">
         <button className="status-card status-card-button" onClick={() => setStatusOpen((open) => !open)} aria-expanded={statusOpen} aria-label="Detalles del estado del servicio"><span className={`status-pulse ${readyState === 'down' ? 'status-down' : ''}`}/><div><strong>{readyState === 'checking' ? 'Comprobando servicio' : readyState === 'operational' ? 'Servicio listo' : 'Servicio no listo'}</strong><small>{readyState === 'operational' ? 'Base de datos y modelos disponibles' : 'Pulsa para comprobar de nuevo'}</small></div></button>
@@ -315,13 +318,13 @@ export function App() {
     </aside>
 
     <main className="main-area">
-      <header className="topbar"><div className="breadcrumb"><span>Relevo</span><span className="crumb-slash">/</span><strong>{tab === 'summary' ? 'Resumen' : tab === 'keys' ? 'Claves API' : tab === 'examples' ? 'Playground' : 'Conectar una app'}</strong></div><div className="topbar-right"><button className="command-trigger" onClick={() => { setCommandQuery(''); setCommandOpen(true) }} aria-label="Abrir comandos"><Icon name="search" size={16}/><span>Buscar</span><kbd>Ctrl K</kbd></button><button className="icon-button theme-toggle" onClick={() => setTheme((current) => current === 'light' ? 'dark' : 'light')} aria-label={`Cambiar a tema ${theme === 'light' ? 'oscuro' : 'claro'}`} title="Cambiar tema"><Icon name={theme === 'light' ? 'moon' : 'sun'} size={16}/></button><button className="service-status-trigger" onClick={() => setStatusOpen((open) => !open)} aria-expanded={statusOpen}><span className={`live-dot ${readyState === 'down' ? 'status-down' : ''}`}/><span>{readyState === 'checking' ? 'Comprobando' : readyState === 'operational' ? 'Servicio listo' : 'Servicio no listo'}</span></button></div>
+      <header className="topbar"><div className="breadcrumb"><span>Relevo</span><span className="crumb-slash">/</span><strong>{tab === 'summary' ? 'Resumen' : tab === 'keys' ? 'Claves API' : tab === 'examples' ? 'Playground' : tab === 'models' ? 'Modelos' : 'Conectar una app'}</strong></div><div className="topbar-right"><button className="command-trigger" onClick={() => { setCommandQuery(''); setCommandOpen(true) }} aria-label="Abrir comandos"><Icon name="search" size={16}/><span>Buscar</span><kbd>Ctrl K</kbd></button><button className="icon-button theme-toggle" onClick={() => setTheme((current) => current === 'light' ? 'dark' : 'light')} aria-label={`Cambiar a tema ${theme === 'light' ? 'oscuro' : 'claro'}`} title="Cambiar tema"><Icon name={theme === 'light' ? 'moon' : 'sun'} size={16}/></button><button className="service-status-trigger" onClick={() => setStatusOpen((open) => !open)} aria-expanded={statusOpen}><span className={`live-dot ${readyState === 'down' ? 'status-down' : ''}`}/><span>{readyState === 'checking' ? 'Comprobando' : readyState === 'operational' ? 'Servicio listo' : 'Servicio no listo'}</span></button></div>
         {statusOpen && <section className="service-popover" aria-label="Detalles del servicio"><div className="popover-title"><strong>Estado del servicio</strong><button className="icon-button" onClick={() => void checkReady()} aria-label="Volver a comprobar"><Icon name="refresh" size={15}/></button></div><dl><div><dt>Base de datos</dt><dd>{readyInfo?.database === 'ok' ? 'Disponible' : readyInfo?.database ?? 'Sin respuesta'}</dd></div><div><dt>Modelos</dt><dd>{readyInfo?.models === 'available' ? 'Disponibles' : readyInfo?.models ?? 'Sin respuesta'}</dd></div></dl><small>{lastReadyCheck ? `Comprobado ${Math.max(0, Math.floor((Date.now() - lastReadyCheck.getTime()) / 1000))} s atrás` : 'Aún sin comprobar'}</small></section>}
       </header>
       {error && <div className="toast error-toast" role="alert"><span>{error}</span><button onClick={() => setError('')}><Icon name="close" size={16}/></button></div>}
       {notice && <div className="toast success-toast" role="status"><Icon name="check" size={16}/><span>{notice}</span><button onClick={() => setNotice('')}><Icon name="close" size={16}/></button></div>}
       <div className="content-wrap">
-        {tab === 'summary' ? <Summary keys={keys} activeCount={activeCount} readyState={readyState} loading={loading} onNavigate={navigate} onCreate={() => { dialogReturnFocus.current = document.activeElement as HTMLElement; setCreateOpen(true) }} /> : tab === 'keys' ? <>
+        {tab === 'models' ? <RoutingModels request={request} /> : tab === 'summary' ? <Summary keys={keys} activeCount={activeCount} readyState={readyState} loading={loading} onNavigate={navigate} onCreate={() => { dialogReturnFocus.current = document.activeElement as HTMLElement; setCreateOpen(true) }} /> : tab === 'keys' ? <>
           <section className="page-heading"><div><div className="eyebrow"><span className="eyebrow-line"/>GESTIÓN DE ACCESO</div><h1>Tus claves,<br/><em>bajo control.</em></h1><p className="intro">Crea accesos seguros para cada aplicación. Tú decides quién entra y cuándo.</p></div><div className="heading-orbit" aria-hidden="true"><div className="orbit-ring ring-one"/><div className="orbit-ring ring-two"/><div className="orbit-center"><Icon name="key" size={24}/></div><span className="orbit-spark spark-a"/><span className="orbit-spark spark-b"/></div></section>
           <section className="overview-row"><div className="stat-card"><span className="stat-icon green"><Icon name="key"/></span><div className="stat-value">{keys.length.toString().padStart(2, '0')}</div><div className="stat-caption">Claves creadas</div></div><div className="stat-card"><span className="stat-icon lime"><span className="tiny-pulse"/></span><div className="stat-value">{activeCount.toString().padStart(2, '0')}</div><div className="stat-caption">Accesos activos</div></div><div className="stat-card stat-note"><div className="note-top"><Icon name="shield" size={16}/><span>PROTEGIDAS POR DISEÑO</span></div><p>El secreto completo se muestra una sola vez al crear la clave.</p><button onClick={() => navigate('/connect')}>Cómo conectarse <Icon name="arrow" size={15}/></button></div></section>
           <section className="keys-section"><div className="section-head"><div><div className="section-kicker">ACCESOS DEL ESPACIO</div><h2>Claves API <span className="count-pill">{keys.length}</span></h2></div><button className="primary-button" onClick={openCreateDialog}><Icon name="plus" size={17}/> Nueva clave</button></div>

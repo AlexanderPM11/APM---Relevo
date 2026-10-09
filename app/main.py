@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
+import httpx
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -38,8 +39,12 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
                 )
                 await session.commit()
         await load_seed(session, settings)
-    yield
-    await engine.dispose()
+    app.state.laya_client = httpx.AsyncClient()
+    try:
+        yield
+    finally:
+        await app.state.laya_client.aclose()
+        await engine.dispose()
 
 
 settings = get_settings()

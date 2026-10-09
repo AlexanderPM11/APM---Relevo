@@ -126,22 +126,20 @@ async def adjust_token_reservation(
     actual_tokens: int,
 ) -> None:
     """Reconcile estimated token reservations to the provider's actual usage."""
-    delta = actual_tokens - sum(
-        counter.amount for counter in reservations if counter.metric in {"tokens", "neurons"}
-    )
-    if delta:
-        for counter in reservations:
-            if counter.metric in {"tokens", "neurons"}:
-                await session.execute(
-                    update(ModelUsage)
-                    .where(
-                        ModelUsage.model_id == model_id,
-                        ModelUsage.window == counter.window,
-                        ModelUsage.window_start == counter.window_start,
-                        ModelUsage.metric == counter.metric,
-                    )
-                    .values(consumed=ModelUsage.consumed + delta)
+    token_counters = [counter for counter in reservations if counter.metric == "tokens"]
+    for counter in token_counters:
+        delta = actual_tokens - counter.amount
+        if delta:
+            await session.execute(
+                update(ModelUsage)
+                .where(
+                    ModelUsage.model_id == model_id,
+                    ModelUsage.window == counter.window,
+                    ModelUsage.window_start == counter.window_start,
+                    ModelUsage.metric == counter.metric,
                 )
+                .values(consumed=ModelUsage.consumed + delta)
+            )
     await session.commit()
 
 

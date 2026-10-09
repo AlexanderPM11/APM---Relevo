@@ -16,6 +16,7 @@ class ProviderError(Exception):
     message: str
     retry_after: int | None = None
     attempts: int = 0
+    routing: dict[str, Any] | None = None
 
 
 class ProviderAdapter(Protocol):

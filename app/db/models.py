@@ -6,6 +6,7 @@ from sqlalchemy import (
     JSON,
     Boolean,
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -72,6 +73,12 @@ class Model(TimestampMixin, Base):
     weight: Mapped[int] = mapped_column(Integer, default=1)
     context_max: Mapped[int] = mapped_column(Integer, default=8192)
     capabilities: Mapped[list[str]] = mapped_column(JSON, default=list)
+    is_free: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    free_verified_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    routing_profile: Mapped[str | None] = mapped_column(String(24), nullable=True)
+    routing_tasks: Mapped[list[str] | None] = mapped_column(JSON, default=list, nullable=True)
     is_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     tier: Mapped[int] = mapped_column(Integer, default=3)
     provider: Mapped[Provider] = relationship(back_populates="models")
@@ -135,3 +142,8 @@ class RequestLog(TimestampMixin, Base):
     input_tokens: Mapped[int] = mapped_column(Integer, default=0)
     output_tokens: Mapped[int] = mapped_column(Integer, default=0)
     error_code: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    routing_task: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    routing_complexity: Mapped[str | None] = mapped_column(String(24), nullable=True)
+    routing_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    routing_mode: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    routing_classifier_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)

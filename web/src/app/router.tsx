@@ -9,6 +9,7 @@ export function AppRouter() {
     <Route path="/keys/*" element={<ConsoleApp/>}/>
     <Route path="/connect" element={<ConsoleApp/>}/>
     <Route path="/playground" element={<ConsoleApp/>}/>
+    <Route path="/models" element={<ConsoleApp/>}/>
     <Route path="/" element={<ConsoleApp/>}/>
     <Route path="*" element={<Navigate to="/keys" replace/>}/>
   </Routes></Suspense></BrowserRouter>

@@ -38,7 +38,14 @@ class Settings(BaseSettings):
     router_request_timeout_seconds: float = 60.0
     router_cooldown_default_seconds: int = 60
     router_circuit_failure_threshold: int = 3
-    router_strategy: Literal["priority", "weighted_round_robin"] = "priority"
+    router_strategy: Literal["priority", "weighted_round_robin", "laya"] = "priority"
+    laya_routing_mode: Literal["off", "shadow", "active"] = "off"
+    laya_base_url: str = "http://laya:8000"
+    laya_api_key: SecretStr | None = None
+    laya_classifier_model: str = "multilingual"
+    laya_timeout_seconds: float = Field(default=2.0, ge=0.1, le=30)
+    laya_min_confidence: float = Field(default=0.55, ge=0, le=1)
+    router_free_only: bool = False
     router_enable_local_fallback: bool = False
     docs_enabled: bool = True
     log_prompts: bool = False
@@ -79,6 +86,11 @@ class Settings(BaseSettings):
                     )
             if self.admin_password is None or len(self.admin_password.get_secret_value()) < 12:
                 raise ValueError("ADMIN_PASSWORD must contain at least 12 characters")
+            if self.router_strategy == "laya" and self.laya_routing_mode != "off":
+                if self.laya_api_key is None or len(self.laya_api_key.get_secret_value()) < 32:
+                    raise ValueError(
+                        "LAYA_API_KEY must contain at least 32 characters when Laya is enabled"
+                    )
         return self
 
     @property

@@ -2,6 +2,7 @@
 
 import asyncio
 import time
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -121,7 +122,9 @@ def _normalize_models(provider: Provider, payload: Any) -> list[dict[str, Any]]:
                     or 8192
                 ),
                 "capabilities": capabilities,
-                "is_free": is_free,
+                "is_free": (
+                    is_free if free_route or (isinstance(pricing, dict) and bool(pricing)) else None
+                ),
             }
         )
     return models
@@ -217,6 +220,12 @@ async def refresh_provider_catalog(session: AsyncSession, settings: Settings) ->
                         weight=1,
                         context_max=max(1, item["context_max"]),
                         capabilities=item["capabilities"],
+                        is_free=item["is_free"],
+                        free_verified_at=(
+                            datetime.now(UTC).replace(tzinfo=None)
+                            if item["is_free"] is not None
+                            else None
+                        ),
                         is_enabled=True,
                         tier=_PROVIDER_TIERS.get(slug, 3),
                     )
@@ -227,4 +236,8 @@ async def refresh_provider_catalog(session: AsyncSession, settings: Settings) ->
                     model.alias = qualified_name if len(qualified_name) <= 100 else None
                     model.context_max = max(1, item["context_max"])
                     model.capabilities = item["capabilities"]
+                    # An unknown response must not erase a prior verified value.
+                    if item["is_free"] is not None:
+                        model.is_free = item["is_free"]
+                        model.free_verified_at = datetime.now(UTC).replace(tzinfo=None)
         await session.commit()

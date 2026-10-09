@@ -3,6 +3,7 @@
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -15,6 +16,7 @@ from app.providers.base import (
     ProviderAdapter,
     ProviderError,
 )
+from app.router.classifier import RoutingDecision, classify_with_laya, order_by_decision
 from app.router.quotas import (
     QuotaExceeded,
     adjust_token_reservation,
@@ -75,7 +77,11 @@ def provider_is_configured(settings: Settings, provider: Provider) -> bool:
 
 
 async def complete_with_fallback(
-    session: AsyncSession, settings: Settings, requested_model: str, payload: dict[str, Any]
+    session: AsyncSession,
+    settings: Settings,
+    requested_model: str,
+    payload: dict[str, Any],
+    laya_client: httpx.AsyncClient | None = None,
 ) -> tuple[dict[str, Any], Model, Provider, int]:
     """Try enabled, credentialed candidates in priority order."""
     result = await session.execute(
@@ -113,6 +119,7 @@ async def complete_with_fallback(
         and (provider.adapter != "google" or not required.intersection({"tools", "json"}))
         and (provider.slug != "ollama" or settings.router_enable_local_fallback)
         and provider_is_configured(settings, provider)
+        and (not settings.router_free_only or requested_model != "auto" or model.is_free is True)
         and (
             model.health is None
             or model.health.state != "open"
@@ -125,10 +132,36 @@ async def complete_with_fallback(
             or model.health.cooldown_until <= datetime.now(UTC).replace(tzinfo=None)
         )
     ]
-    if settings.router_strategy == "weighted_round_robin":
+    routing_decision: RoutingDecision | None = None
+    if (
+        settings.router_strategy == "laya"
+        and settings.laya_routing_mode != "off"
+        and requested_model == "auto"
+    ):
+        routing_decision = await classify_with_laya(
+            laya_client, settings, payload.get("messages", [])
+        )
+        if settings.laya_routing_mode == "active":
+            candidates = order_by_decision(candidates, routing_decision)
+    elif settings.router_strategy == "weighted_round_robin":
         candidates = _weighted_order(candidates)
+    routing_trace = (
+        {
+            "task": routing_decision.task,
+            "complexity": routing_decision.complexity,
+            "confidence": routing_decision.confidence,
+            "classifier": routing_decision.classifier,
+            "classifier_ms": routing_decision.classifier_ms,
+            "fallback": routing_decision.fallback,
+            "mode": settings.laya_routing_mode,
+        }
+        if routing_decision is not None
+        else None
+    )
     if not candidates:
-        raise ProviderError(503, "No compatible model is currently available")
+        raise ProviderError(
+            503, "No compatible model is currently available", routing=routing_trace
+        )
     errors: list[ProviderError] = []
     retry_after_values: list[int] = []
     attempts = 0
@@ -184,6 +217,8 @@ async def complete_with_fallback(
                 model.health.cooldown_until = None
                 model.health.last_error = None
                 await session.commit()
+            if routing_trace is not None:
+                completion["_relevo_routing"] = routing_trace
             return completion, model, provider, attempts
         except ProviderError as error:
             errors.append(error)
@@ -218,16 +253,20 @@ async def complete_with_fallback(
                 ):
                     continue
                 error.attempts = attempts
+                error.routing = routing_trace
                 raise error
             if error.status_code in (401, 403):
                 continue
     if errors and all(error.status_code in (401, 403) for error in errors):
         raise ProviderError(
-            502, "All configured providers rejected authentication", attempts=attempts
+            502,
+            "All configured providers rejected authentication",
+            attempts=attempts,
+            routing=routing_trace,
         )
     retry_after = (
         min(retry_after_values)
         if retry_after_values
         else next((error.retry_after for error in errors if error.retry_after), None)
     )
-    raise ProviderError(503, "All available models failed", retry_after, attempts)
+    raise ProviderError(503, "All available models failed", retry_after, attempts, routing_trace)
