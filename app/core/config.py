@@ -5,6 +5,7 @@ from typing import Literal
 
 from pydantic import EmailStr, Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy.engine import URL
 
 
 class Settings(BaseSettings):
@@ -55,15 +56,23 @@ class Settings(BaseSettings):
     def validate_production_secrets(self) -> "Settings":
         """Reject known development credentials in production."""
         if self.app_env == "production":
-            required = ("mysql_password", "mysql_root_password", "jwt_secret", "api_key_pepper",
-                        "admin_email", "admin_password")
+            required = (
+                "mysql_password",
+                "mysql_root_password",
+                "jwt_secret",
+                "api_key_pepper",
+                "admin_email",
+                "admin_password",
+            )
             for field in required:
                 if field not in self.model_fields_set:
                     raise ValueError(f"{field.upper()} must be explicitly configured in production")
             for field in ("jwt_secret", "api_key_pepper"):
                 secret = getattr(self, field).get_secret_value()
                 if secret.startswith("development-only") or len(secret) < 32:
-                    raise ValueError(f"{field.upper()} must be a unique secret of at least 32 characters")
+                    raise ValueError(
+                        f"{field.upper()} must be a unique secret of at least 32 characters"
+                    )
             if self.admin_password is None or len(self.admin_password.get_secret_value()) < 12:
                 raise ValueError("ADMIN_PASSWORD must contain at least 12 characters")
         return self
@@ -73,11 +82,15 @@ class Settings(BaseSettings):
         """Return explicit URL or construct the async MySQL URL."""
         if self.database_url:
             return self.database_url
-        password = self.mysql_password.get_secret_value()
-        return (
-            f"mysql+asyncmy://{self.mysql_user}:{password}@{self.mysql_host}:"
-            f"{self.mysql_port}/{self.mysql_database}?charset=utf8mb4"
-        )
+        return URL.create(
+            "mysql+asyncmy",
+            username=self.mysql_user,
+            password=self.mysql_password.get_secret_value(),
+            host=self.mysql_host,
+            port=self.mysql_port,
+            database=self.mysql_database,
+            query={"charset": "utf8mb4"},
+        ).render_as_string(hide_password=False)
 
     @property
     def cors_origin_list(self) -> list[str]:

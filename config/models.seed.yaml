@@ -50,12 +50,62 @@ providers:
         priority: 30
         weight: 2
         context_max: 1048576
-        capabilities: [text, vision, tools, json]
+        capabilities: [text]
         limits: []
   - slug: openrouter
     name: OpenRouter
     base_url: https://openrouter.ai/api/v1
     env_key_name: OPENROUTER_API_KEY
+    requires_card: unknown
+    requires_phone: unknown
+    uses_data_for_training: unknown
+    tier: 3
+    adapter: openai
+    models: []
+  - slug: cloudflare
+    name: Cloudflare Workers AI
+    base_url: https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/v1
+    env_key_name: CLOUDFLARE_API_TOKEN
+    requires_card: unknown
+    requires_phone: unknown
+    uses_data_for_training: unknown
+    tier: 2
+    adapter: openai
+    models: []
+  - slug: cohere
+    name: Cohere
+    base_url: https://api.cohere.ai/compatibility/v1
+    env_key_name: COHERE_API_KEY
+    requires_card: unknown
+    requires_phone: unknown
+    uses_data_for_training: unknown
+    tier: 3
+    adapter: openai
+    models: []
+  - slug: mistral
+    name: Mistral
+    base_url: https://api.mistral.ai/v1
+    env_key_name: MISTRAL_API_KEY
+    requires_card: unknown
+    requires_phone: unknown
+    uses_data_for_training: unknown
+    tier: 3
+    adapter: openai
+    models: []
+  - slug: nvidia
+    name: NVIDIA NIM
+    base_url: https://integrate.api.nvidia.com/v1
+    env_key_name: NVIDIA_API_KEY
+    requires_card: unknown
+    requires_phone: unknown
+    uses_data_for_training: unknown
+    tier: 3
+    adapter: openai
+    models: []
+  - slug: kilo
+    name: Kilo Gateway
+    base_url: https://api.kilo.ai/api/gateway
+    env_key_name: KILO_API_KEY
     requires_card: unknown
     requires_phone: unknown
     uses_data_for_training: unknown

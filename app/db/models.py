@@ -85,6 +85,7 @@ class ModelLimit(TimestampMixin, Base):
     """Provider quota for a model and metric window."""
 
     __tablename__ = "model_limits"
+    __table_args__ = (UniqueConstraint("model_id", "window", "metric"),)
     id: Mapped[int] = mapped_column(primary_key=True)
     model_id: Mapped[int] = mapped_column(ForeignKey("models.id", ondelete="CASCADE"), index=True)
     window: Mapped[str] = mapped_column(String(16))

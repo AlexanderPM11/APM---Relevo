@@ -1,12 +1,14 @@
 """Public OpenAI-compatible and administrator API endpoints."""
 
 import time
+from datetime import UTC, datetime
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.auth.dependencies import require_admin, require_api_key
 from app.auth.rate_limit import allow_request
@@ -18,11 +20,19 @@ from app.core.security import (
     hash_password,
     verify_password,
 )
-from app.db.models import AdminUser, ApiKey, Model, Provider
-from app.db.models import ModelHealth, ModelLimit, ModelUsage, RequestLog
+from app.db.models import (
+    AdminUser,
+    ApiKey,
+    Model,
+    ModelHealth,
+    ModelLimit,
+    ModelUsage,
+    Provider,
+    RequestLog,
+)
 from app.db.session import get_session
 from app.providers.base import ProviderError
-from app.router.service import complete_with_fallback, provider_key
+from app.router.service import complete_with_fallback, provider_is_configured
 from app.schemas.chat import ChatCompletionRequest
 
 router = APIRouter()
@@ -92,7 +102,18 @@ async def chat_completions(
             session, settings, request.model, payload
         )
     except ProviderError as error:
-        headers = {"Retry-After": str(error.retry_after or settings.router_cooldown_default_seconds)}
+        session.add(RequestLog(
+            api_key_id=api_key.id,
+            requested_model=request.model,
+            attempts=error.attempts,
+            status="error",
+            latency_ms=int((time.monotonic() - started) * 1000),
+            error_code=f"upstream_{error.status_code}",
+        ))
+        await session.commit()
+        headers = {
+            "Retry-After": str(error.retry_after or settings.router_cooldown_default_seconds)
+        }
         raise HTTPException(error.status_code, error.message, headers=headers) from error
     response.headers["X-Relevo-Model"] = model.name
     response.headers["X-Relevo-Provider"] = provider.slug
@@ -109,7 +130,11 @@ async def chat_completions(
         output_tokens=int(usage.get("completion_tokens", 0)),
     ))
     await session.commit()
-    completion["model"] = request.model if request.model not in ("auto", model.alias) else model.alias or model.name
+    completion["model"] = (
+        request.model
+        if request.model not in ("auto", model.alias)
+        else model.alias or model.name
+    )
     return completion
 
 
@@ -120,13 +145,22 @@ async def available_models(
     """List models whose provider currently has credentials configured."""
     settings = get_settings()
     result = await session.execute(
-        select(Model, Provider).join(Provider).where(Model.is_enabled.is_(True), Provider.is_enabled.is_(True))
+        select(Model, Provider)
+        .join(Provider)
+        .where(Model.is_enabled.is_(True), Provider.is_enabled.is_(True))
+        .options(selectinload(Model.health))
     )
+    now = datetime.now(UTC).replace(tzinfo=None)
     data = [
         {"id": model.alias or model.name, "object": "model", "owned_by": provider.slug}
         for model, provider in result.all()
         if provider.slug != "ollama" or settings.router_enable_local_fallback
-        if provider_key(settings, provider.env_key_name)
+        if provider_is_configured(settings, provider)
+        if provider.adapter in {"openai", "google"}
+        if model.health is None
+        or model.health.state != "open"
+        or model.health.cooldown_until is None
+        or model.health.cooldown_until <= now
     ]
     return {"object": "list", "data": data}
 
@@ -139,7 +173,11 @@ async def login(body: LoginRequest, request: Request, session: SessionDep) -> di
         raise HTTPException(429, "Too many login attempts", headers={"Retry-After": "300"})
     result = await session.execute(select(AdminUser).where(AdminUser.email == str(body.email)))
     admin = result.scalar_one_or_none()
-    if admin is None or not admin.is_active or not verify_password(body.password, admin.password_hash):
+    if (
+        admin is None
+        or not admin.is_active
+        or not verify_password(body.password, admin.password_hash)
+    ):
         raise HTTPException(401, "Invalid email or password")
     settings = get_settings()
     token = create_access_token(
@@ -208,8 +246,18 @@ async def delete_provider(slug: str, session: SessionDep) -> Response:
 async def list_admin_models(session: SessionDep) -> list[dict[str, Any]]:
     """List configured models and routing metadata."""
     result = await session.execute(select(Model).order_by(Model.tier, Model.priority))
-    return [{"id": m.id, "provider_id": m.provider_id, "name": m.name, "alias": m.alias,
-             "priority": m.priority, "tier": m.tier, "is_enabled": m.is_enabled} for m in result.scalars()]
+    return [
+        {
+            "id": model.id,
+            "provider_id": model.provider_id,
+            "name": model.name,
+            "alias": model.alias,
+            "priority": model.priority,
+            "tier": model.tier,
+            "is_enabled": model.is_enabled,
+        }
+        for model in result.scalars()
+    ]
 
 
 @router.post("/admin/providers/{slug}", dependencies=[admin_guard()])
@@ -279,7 +327,11 @@ async def set_model_limit(
     if await session.get(Model, model_id) is None:
         raise HTTPException(404, "Model not found")
     window, metric, maximum = body.get("window"), body.get("metric"), body.get("max_value")
-    if window not in {"minute", "hour", "day", "month"} or metric not in {"requests", "tokens", "neurons"}:
+    if window not in {"minute", "hour", "day", "month"} or metric not in {
+        "requests",
+        "tokens",
+        "neurons",
+    }:
         raise HTTPException(422, "Unsupported quota window or metric")
     if not isinstance(maximum, int) or maximum <= 0:
         raise HTTPException(422, "max_value must be a positive integer")

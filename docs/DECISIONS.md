@@ -6,15 +6,17 @@ Contexto: la especificación permite LiteLLM o clientes HTTP directos para prove
 
 Decisión: Relevo implementa un adaptador HTTP asíncrono con `httpx` para la interfaz Chat Completions compatible con OpenAI.
 
-Motivo: reduce dependencias y permite normalizar errores HTTP y `Retry-After` sin almacenar credenciales en la base de datos. Google AI Studio, Cloudflare, Cohere y streaming requieren adaptadores específicos aún pendientes.
+Motivo: reduce dependencias y permite normalizar errores HTTP y `Retry-After` sin almacenar credenciales en la base de datos. Google AI Studio usa traducción propia; los demás endpoints configurados siguen la interfaz compatible con OpenAI.
+
+Actualización: streaming y funciones específicas no compatibles con OpenAI aún requieren implementación. Se configuraron los endpoints compatibles con OpenAI para Cohere, Mistral, NVIDIA NIM, Kilo Gateway y Cloudflare. Los modelos y límites de esos proveedores no se rellenan hasta verificarlos por separado.
 
 ## Estado de cuotas
 
 Contexto: el plan pide cuotas compartidas entre peticiones y persistidas en MySQL, sin Redis en la primera versión.
 
-Decisión: se definió el esquema persistente en MySQL; la reserva transaccional, reconciliación y selección ponderada deben completarse antes de anunciar límites efectivos.
+Decisión: las cuotas configuradas se reservan en MySQL con `INSERT IGNORE`, bloqueos de filas y una transacción que valida todas las ventanas antes de incrementar contadores. El uso de tokens se ajusta con los valores reportados por el proveedor cuando están disponibles.
 
-Motivo: los contadores en memoria no son seguros ante concurrencia ni reinicios.
+Motivo: los contadores compartidos y bloqueados por ventana evitan exceder los límites por concurrencia entre procesos. La estrategia ponderada mantiene su cursor en memoria, por lo que requiere un único worker por proceso.
 
 ## Workers
 

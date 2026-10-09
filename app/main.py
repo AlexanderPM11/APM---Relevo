@@ -1,21 +1,21 @@
 """FastAPI application entry point."""
 
+from collections.abc import Awaitable, Callable, AsyncIterator
 from contextlib import asynccontextmanager
-from typing import AsyncIterator
+from datetime import UTC, datetime
 
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-from collections.abc import Awaitable, Callable
-
 from fastapi import HTTPException, Request, Response
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select, text
+from sqlalchemy.orm import selectinload
 
 from app.core.config import get_settings
 from app.core.seed import load_seed
 from app.core.security import hash_password
+from app.api.routes import router as api_router
 from app.db.models import AdminUser
 from app.db.session import SessionLocal, engine
-from app.api.routes import router as api_router
 
 
 @asynccontextmanager
@@ -30,12 +30,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
                     password_hash=hash_password(settings.admin_password.get_secret_value()),
                 ))
                 await session.commit()
-        try:
-            await load_seed(session, settings)
-        except Exception:
-            # Migrations run before the app process; a temporary DB outage should
-            # still fail startup in readiness instead of hiding this condition.
-            await session.rollback()
+        await load_seed(session, settings)
     yield
     await engine.dispose()
 
@@ -81,17 +76,30 @@ async def health() -> dict[str, str]:
 async def ready() -> dict[str, str]:
     """Verify database connectivity and at least one credentialed model."""
     from app.db.models import Model, Provider
-    from app.router.service import provider_key
+    from app.router.service import provider_is_configured
 
     try:
         async with SessionLocal() as session:
             await session.execute(text("SELECT 1"))
             rows = await session.execute(
-                select(Model, Provider).join(Provider).where(
-                    Model.is_enabled.is_(True), Provider.is_enabled.is_(True)
-                )
+                select(Model, Provider)
+                .join(Provider)
+                .where(Model.is_enabled.is_(True), Provider.is_enabled.is_(True))
+                .options(selectinload(Model.health))
             )
-            available = any(provider_key(settings, provider.env_key_name) for _, provider in rows.all())
+            now = datetime.now(UTC).replace(tzinfo=None)
+            available = any(
+                provider_is_configured(settings, provider)
+                and (provider.adapter in {"openai", "google"})
+                and (provider.slug != "ollama" or settings.router_enable_local_fallback)
+                and (
+                    model.health is None
+                    or model.health.state != "open"
+                    or model.health.cooldown_until is None
+                    or model.health.cooldown_until <= now
+                )
+                for model, provider in rows.all()
+            )
     except Exception as exc:
         raise HTTPException(503, "Service is not ready") from exc
     if not available:
