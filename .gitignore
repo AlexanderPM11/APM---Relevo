@@ -34,3 +34,4 @@ Thumbs.db
 # Runtime state and logs
 *.log
 mysql-data/
+docker-compose.yml
