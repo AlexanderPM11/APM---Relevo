@@ -128,8 +128,13 @@ export function App() {
   useEffect(() => {
     const nextTab = location.pathname.startsWith('/connect') ? 'connect' : location.pathname.startsWith('/playground') ? 'examples' : 'keys'
     setTab(nextTab)
-    document.title = `${nextTab === 'keys' ? 'Claves API' : nextTab === 'connect' ? 'Conectar una app' : 'Playground'} · Relevo`
+    document.title = location.pathname === '/login' ? 'Acceso · Relevo' : `${nextTab === 'keys' ? 'Claves API' : nextTab === 'connect' ? 'Conectar una app' : 'Playground'} · Relevo`
   }, [location.pathname])
+
+  useEffect(() => {
+    if (!token && location.pathname !== '/login') navigate('/login', { replace: true })
+    if (token && location.pathname === '/login') navigate('/keys', { replace: true })
+  }, [token, location.pathname, navigate])
 
   useEffect(() => {
     void fetch('/console-config').then(async (response) => {
@@ -187,6 +192,7 @@ export function App() {
     sessionStorage.removeItem(TOKEN_SLOT)
     setToken(null); setAdmin(null); setKeys([]); setTab('keys'); setNewKey(null)
     setCreateOpen(false); setConfirmRevoke(null); setSearch(''); setError(''); setNotice('')
+    navigate('/login', { replace: true })
   }
 
   async function createKey(values: { name: string; owner: string; requests_per_minute: number }) {
@@ -230,7 +236,7 @@ export function App() {
       <div className="content-wrap">
         {tab === 'keys' ? <>
           <section className="page-heading"><div><div className="eyebrow"><span className="eyebrow-line"/>GESTIÓN DE ACCESO</div><h1>Tus claves,<br/><em>bajo control.</em></h1><p className="intro">Crea accesos seguros para cada aplicación. Tú decides quién entra y cuándo.</p></div><div className="heading-orbit" aria-hidden="true"><div className="orbit-ring ring-one"/><div className="orbit-ring ring-two"/><div className="orbit-center"><Icon name="key" size={24}/></div><span className="orbit-spark spark-a"/><span className="orbit-spark spark-b"/></div></section>
-          <section className="overview-row"><div className="stat-card"><span className="stat-icon green"><Icon name="key"/></span><div className="stat-value">{keys.length.toString().padStart(2, '0')}</div><div className="stat-caption">Claves creadas</div></div><div className="stat-card"><span className="stat-icon lime"><span className="tiny-pulse"/></span><div className="stat-value">{activeCount.toString().padStart(2, '0')}</div><div className="stat-caption">Accesos activos</div></div><div className="stat-card stat-note"><div className="note-top"><Icon name="shield" size={16}/><span>PROTEGIDAS POR DISEÑO</span></div><p>El secreto completo se muestra una sola vez al crear la clave.</p><button onClick={() => setTab('connect')}>Cómo conectarse <Icon name="arrow" size={15}/></button></div></section>
+          <section className="overview-row"><div className="stat-card"><span className="stat-icon green"><Icon name="key"/></span><div className="stat-value">{keys.length.toString().padStart(2, '0')}</div><div className="stat-caption">Claves creadas</div></div><div className="stat-card"><span className="stat-icon lime"><span className="tiny-pulse"/></span><div className="stat-value">{activeCount.toString().padStart(2, '0')}</div><div className="stat-caption">Accesos activos</div></div><div className="stat-card stat-note"><div className="note-top"><Icon name="shield" size={16}/><span>PROTEGIDAS POR DISEÑO</span></div><p>El secreto completo se muestra una sola vez al crear la clave.</p><button onClick={() => navigate('/connect')}>Cómo conectarse <Icon name="arrow" size={15}/></button></div></section>
           <section className="keys-section"><div className="section-head"><div><div className="section-kicker">ACCESOS DEL ESPACIO</div><h2>Claves API <span className="count-pill">{keys.length}</span></h2></div><button className="primary-button" onClick={openCreateDialog}><Icon name="plus" size={17}/> Nueva clave</button></div>
             <div className="key-toolbar"><div className="search-box"><span className="search-glyph">⌕</span><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar por nombre o propietario…" aria-label="Buscar claves"/></div><button className="icon-button refresh-button" onClick={() => void loadKeys()} title="Actualizar" disabled={loading}><Icon name="refresh" size={17}/></button></div>
             <div className="key-list">
@@ -238,8 +244,8 @@ export function App() {
             </div>
             <div className="list-foot"><span>El secreto completo solo se muestra al crear la clave.</span><span><span className="tiny-pulse"/> Secreto visible una sola vez</span></div>
           </section>
-        </> : tab === 'connect' ? <ConnectGuide onCopy={copy} copied={copied} apiBase={apiBase} /> : <ApiPlayground catalog={playgroundCatalog} onManageKeys={() => setTab('keys')} onRefresh={() => void loadPlaygroundCatalog()} />}
-        <footer className="page-footer"><span>RELEVO <b>·</b> ACCESO A MODELOS, EN UN SOLO LUGAR</span><a href="/openapi.json" target="_blank" rel="noreferrer">Referencia de API <Icon name="external" size={13}/></a></footer>
+        </> : tab === 'connect' ? <ConnectGuide onCopy={copy} copied={copied} apiBase={apiBase} /> : <ApiPlayground catalog={playgroundCatalog} onManageKeys={() => navigate('/keys')} onRefresh={() => void loadPlaygroundCatalog()} />}
+        <footer className="page-footer"><span>RELEVO <b>·</b> ACCESO A MODELOS, EN UN SOLO LUGAR</span><a href="/openapi.json" target="_blank" rel="noopener noreferrer">Referencia de API <Icon name="external" size={13}/></a></footer>
       </div>
     </main>
     </div>
@@ -408,8 +414,7 @@ function ConnectGuide({ onCopy, copied, apiBase }: { onCopy: (text: string, labe
     <section className="page-heading connect-heading"><div><div className="eyebrow"><span className="eyebrow-line"/>INTEGRACIÓN</div><h1>Una API.<br/><em>Tus aplicaciones.</em></h1><p className="intro">Conecta cualquier herramienta compatible con OpenAI. Usa una clave distinta por aplicación.</p></div><div className="connect-illustration"><div className="connect-node node-app"><Icon name="code" size={19}/><span>TU APP</span></div><div className="connect-path"><i/><i/><i/></div><div className="connect-node node-relevo"><span className="node-r">r</span><span>RELEVO</span></div></div></section>
     <div className="connect-grid"><section className="guide-main"><div className="guide-card"><div className="guide-title"><div><span className="section-kicker">EMPIEZA EN UN MINUTO</span><h2>Haz tu primera llamada</h2></div><span className="guide-step">01 <i>/ 03</i></span></div><p className="guide-copy">Guarda tu clave como <code>RELEVO_API_KEY</code> en las variables de entorno de tu aplicación. Luego envía una solicitud:</p><div className="code-window"><div className="code-top"><div className="code-lights"><i/><i/><i/></div><div className="code-tabs">{(['curl', 'javascript', 'python'] as const).map((item) => <button key={item} className={language === item ? 'selected' : ''} onClick={() => setLanguage(item)}>{item === 'javascript' ? 'Node.js' : item === 'python' ? 'Python' : 'cURL'}</button>)}</div><button className="code-copy" onClick={() => void onCopy(samples[language], 'snippet')}><Icon name={copied === 'snippet' ? 'check' : 'copy'} size={14}/>{copied === 'snippet' ? 'Copiado' : 'Copiar'}</button></div><pre><code>{samples[language]}</code></pre></div><div className="response-meta"><span className="method-pill">POST</span><code>/v1/chat/completions</code><button onClick={() => void onCopy(`${endpoint}/chat/completions`, 'endpoint')}>{copied === 'endpoint' ? 'Copiado' : 'Copiar URL'}</button></div></div>
       <div className="steps-row"><article><span>01</span><div><strong>Crea una clave</strong><p>Asigna un nombre que reconozcas.</p></div></article><article><span>02</span><div><strong>Guárdala como secreto</strong><p>Usa variables de entorno.</p></div></article><article><span>03</span><div><strong>Envía tu solicitud</strong><p>Relevo selecciona el modelo.</p></div></article></div>
-    </section><aside className="guide-aside" aria-label="Recomendaciones de seguridad"><div className="aside-label"><Icon name="shield" size={16}/> RECOMENDADO</div><h3>Protege tu acceso</h3><ul><li><span className="bullet-check"><Icon name="check" size={12}/></span><span>Una clave diferente para cada aplicación.</span></li><li><span className="bullet-check"><Icon name="check" size={12}/></span><span>Guárdala en el servidor, nunca en el navegador.</span></li><li><span className="bullet-check"><Icon name="check" size={12}/></span><span>Revoca el acceso si una clave se expone.</span></li></ul><div className="aside-divider"/><span className="aside-label">URL BASE</span><div className="base-url"><code>{endpoint}</code><button className="icon-button" onClick={() => void onCopy(endpoint, 'base')} title="Copiar URL base"><Icon name={copied === 'base' ? 'check' : 'copy'} size={15}/></button></div><p className="compat-note"><span className="compat-mark">↗</span> Compatible con clientes OpenAI y llamadas HTTP estándar.</p><a className="docs-link" href="/openapi.json" target="_blank" rel="noreferrer">Ver referencia de API <Icon name="external" size={14}/></a></aside></div>
+    </section><aside className="guide-aside" aria-label="Recomendaciones de seguridad"><div className="aside-label"><Icon name="shield" size={16}/> RECOMENDADO</div><h3>Protege tu acceso</h3><ul><li><span className="bullet-check"><Icon name="check" size={12}/></span><span>Una clave diferente para cada aplicación.</span></li><li><span className="bullet-check"><Icon name="check" size={12}/></span><span>Guárdala en el servidor, nunca en el navegador.</span></li><li><span className="bullet-check"><Icon name="check" size={12}/></span><span>Revoca el acceso si una clave se expone.</span></li></ul><div className="aside-divider"/><span className="aside-label">URL BASE</span><div className="base-url"><code>{endpoint}</code><button className="icon-button" onClick={() => void onCopy(endpoint, 'base')} title="Copiar URL base"><Icon name={copied === 'base' ? 'check' : 'copy'} size={15}/></button></div><p className="compat-note"><span className="compat-mark">↗</span> Compatible con clientes OpenAI y llamadas HTTP estándar.</p><a className="docs-link" href="/openapi.json" target="_blank" rel="noopener noreferrer">Ver referencia de API <Icon name="external" size={14}/></a></aside></div>
   </>
 }
 
-createRoot(document.getElementById('root')!).render(<React.StrictMode><App/></React.StrictMode>)
