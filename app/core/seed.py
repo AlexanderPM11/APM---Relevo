@@ -34,6 +34,8 @@ async def load_seed(session: AsyncSession, settings: Settings | None = None) -> 
             enabled = bool(key and settings.cloudflare_account_id)
         elif provider_slug == "ollama":
             enabled = bool(key and settings.router_enable_local_fallback)
+        elif provider_slug == "kilo":
+            enabled = True  # Anonymous access is allowed for Kilo's free model routes.
         requires_card = data.get("requires_card")
         requires_phone = data.get("requires_phone")
         if requires_card == "unknown":
@@ -72,7 +74,7 @@ async def load_seed(session: AsyncSession, settings: Settings | None = None) -> 
                 "weight": model_data.get("weight", 1),
                 "context_max": model_data.get("context_max", 8192),
                 "capabilities": model_data.get("capabilities", ["text"]),
-                "is_enabled": True,
+                "is_enabled": model_data.get("is_enabled", True),
                 "tier": tier,
             }
             if model is None:

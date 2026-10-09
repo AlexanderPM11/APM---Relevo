@@ -44,6 +44,7 @@ class Settings(BaseSettings):
     groq_api_key: SecretStr | None = None
     cerebras_api_key: SecretStr | None = None
     openrouter_api_key: SecretStr | None = None
+    huggingface_api_key: SecretStr | None = None
     cloudflare_account_id: str | None = None
     cloudflare_api_token: SecretStr | None = None
     cohere_api_key: SecretStr | None = None

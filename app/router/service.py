@@ -67,6 +67,8 @@ def provider_key(settings: Settings, env_name: str) -> str | None:
 
 def provider_is_configured(settings: Settings, provider: Provider) -> bool:
     """Check the credential and auxiliary settings needed by an adapter."""
+    if provider.slug == "kilo":
+        return True  # Kilo permits anonymous requests for its free model routes.
     if provider.slug == "cloudflare" and not settings.cloudflare_account_id:
         return False
     return bool(provider_key(settings, provider.env_key_name))
@@ -133,8 +135,12 @@ async def complete_with_fallback(
     for model, provider in candidates:
         if attempts >= settings.router_max_attempts:
             break
-        key = "" if provider.slug == "ollama" else provider_key(settings, provider.env_key_name)
-        if not key and provider.slug != "ollama":
+        key = (
+            ""
+            if provider.slug in {"ollama", "kilo"}
+            else provider_key(settings, provider.env_key_name)
+        )
+        if not key and provider.slug not in {"ollama", "kilo"}:
             continue
         try:
             reservation = await reserve_quota(
@@ -159,7 +165,6 @@ async def complete_with_fallback(
                 base_url,
                 key or "",
                 settings.router_request_timeout_seconds,
-                {"cf-aig-gateway-id": "default"} if provider.slug == "cloudflare" else None,
             )
         else:
             continue

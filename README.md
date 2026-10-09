@@ -11,3 +11,5 @@ Use Python 3.12 and Docker Compose. Copy `.env.example` to `.env`, replace the l
 Install development dependencies with `python -m pip install -e '.[dev]'`. Run quality checks with `ruff check .`, `ruff format --check .`, `mypy app`, and `pytest`.
 
 Provider catalog values in `config/models.seed.yaml` are configurable references. Verify provider model names, limits, and signup requirements against provider documentation before production use. Version 1 targets a single Uvicorn worker because in-process routing state is not shared between workers.
+
+The free-provider inventory, account requirements, included models, and setup steps are in [docs/FREE_PROVIDERS.md](docs/FREE_PROVIDERS.md). Add only the provider keys you choose to `.env`; Relevo routes across the configured providers and falls back when one is rate-limited or unavailable.
