@@ -1,0 +1,60 @@
+# Relevo — Plan de implementación
+
+- [ ] T0.1 Inicializar repositorio, `.gitignore` (incluye `.env`), `.dockerignore`, licencia MIT.
+- [ ] T0.2 `pyproject.toml` con dependencias y herramientas (`ruff`, `mypy`, `pytest`).
+- [ ] T0.3 `pre-commit` con ruff, mypy y escaneo de secretos.
+- [ ] T0.4 Crear `docs/PLAN.md`, `DECISIONS.md`, `BLOCKERS.md`, `ARCHITECTURE.md`.
+- [ ] T0.5 CI en GitHub Actions: lint, tipos y pruebas en cada push.
+- [ ] T1.1 `app/core/config.py` con `pydantic-settings` y validación de variables obligatorias.
+- [ ] T1.2 `.env.example` completo y comentado (sección 5).
+- [ ] T1.3 `Dockerfile` multi-stage, usuario sin root, `HEALTHCHECK`.
+- [ ] T1.4 `docker-compose.yml` con servicios `app` y `mysql` (sección 11).
+- [ ] T1.5 Endpoint `/health` y arranque mínimo de FastAPI.
+- [ ] T2.1 Sesión async de SQLAlchemy y gestión de conexiones.
+- [ ] T2.2 Modelos de la sección 6.
+- [ ] T2.3 Migración inicial con Alembic.
+- [ ] T2.4 `scripts/entrypoint.sh`: esperar a MySQL, ejecutar `alembic upgrade head`, arrancar la app.
+- [ ] T2.5 Repositorios con pruebas de integración.
+- [ ] T2.6 Endpoint `/ready`.
+- [ ] T3.1 Hash argon2 y creación del primer administrador desde `ADMIN_EMAIL` y `ADMIN_PASSWORD`.
+- [ ] T3.2 Login y emisión de JWT.
+- [ ] T3.3 Dependencia de autorización para `/admin/*`.
+- [ ] T3.4 Generación, hash y validación de API keys; CRUD de API keys.
+- [ ] T3.5 Límite de peticiones por API key y límite de intentos de login.
+- [ ] T4.1 `config/models.seed.yaml` con los proveedores de la sección 8 (límites marcados como por verificar).
+- [ ] T4.2 Cargador del seed, idempotente, que se ejecuta al arrancar y con `/admin/seed/reload`.
+- [ ] T4.3 Deshabilitar automáticamente proveedores sin clave en `.env`.
+- [ ] T4.4 CRUD admin de proveedores, modelos y límites.
+- [ ] T5.1 Interfaz base: `chat()`, `stream()`, normalización de errores a un conjunto común.
+- [ ] T5.2 Adaptador genérico compatible con OpenAI (Groq, Cerebras, OpenRouter, Mistral, NVIDIA, Kilo, Ollama).
+- [ ] T5.3 Adaptador de Google AI Studio.
+- [ ] T5.4 Adaptador de Cloudflare Workers AI.
+- [ ] T5.5 Adaptador de Cohere.
+- [ ] T5.6 Lectura de cabeceras de límite y `Retry-After`.
+- [ ] T6.1 Contador de cuotas por ventana (minuto, hora, día, mes) con reserva y ajuste.
+- [ ] T6.2 Cooldown y circuit breaker persistidos en `model_health`.
+- [ ] T6.3 Selector con filtros y orden por nivel y prioridad.
+- [ ] T6.4 Estrategia `weighted_round_robin`.
+- [ ] T6.5 Bucle de fallback con clasificación de errores (sección 8).
+- [ ] T6.6 Estimación de tokens y detección de contexto excedido.
+- [ ] T6.7 Soporte de streaming con fallback previo al primer byte.
+- [ ] T7.1 `POST /v1/chat/completions` sin streaming.
+- [ ] T7.2 Streaming por SSE.
+- [ ] T7.3 `GET /v1/models`.
+- [ ] T7.4 Cabeceras `X-Relevo-*` y respuestas 503 con `Retry-After`.
+- [ ] T7.5 Registro en `request_logs`.
+- [ ] T8.1 Logs estructurados en JSON con redacción de secretos.
+- [ ] T8.2 `GET /admin/stats` con métricas agregadas.
+- [ ] T8.3 Endpoint de métricas en formato Prometheus (opcional, activable por variable).
+- [ ] T8.4 Tarea periódica de sondeo de salud de modelos y limpieza de ventanas antiguas.
+- [ ] T9.1 Pruebas end-to-end con proveedores simulados y MySQL real del compose.
+- [ ] T9.2 Prueba de carga básica (`locust` o `k6`) para verificar que las cuotas no se exceden bajo concurrencia.
+- [ ] T9.3 Revisión de seguridad: dependencias (`pip-audit`), cabeceras, errores, secretos.
+- [ ] T9.4 Cobertura mínima del 80 % en `app/router` y `app/auth`.
+- [ ] T9.5 `README.md` completo: instalación, configuración, ejemplos con `curl` y con el SDK de OpenAI, limitaciones conocidas.
+- [ ] T10.1 Ajustar `docker-compose.yml` a los requisitos de Dokploy (sección 11).
+- [ ] T10.2 Documentar el despliegue paso a paso en `docs/DEPLOY.md` (repositorio, variables, dominio, volumen, healthchecks).
+- [ ] T10.3 Respaldo de MySQL documentado (volcado programado y restauración probada).
+- [ ] T10.4 Prueba de humo posterior al despliegue (`/health`, `/ready`, una petición real).
+- [ ] T10.5 Etiquetar la versión `v1.0.0` y crear el release en GitHub.
+

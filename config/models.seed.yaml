@@ -1,0 +1,74 @@
+# Initial routing catalog. Provider limits and free-tier eligibility are references
+# only and must be verified against current provider terms before production use.
+providers:
+  - slug: groq
+    name: Groq
+    base_url: https://api.groq.com/openai/v1
+    env_key_name: GROQ_API_KEY
+    requires_card: false
+    requires_phone: true
+    uses_data_for_training: unknown
+    tier: 1
+    adapter: openai
+    models:
+      - name: llama-3.3-70b-versatile
+        alias: fast
+        priority: 10
+        weight: 3
+        context_max: 32768
+        capabilities: [text, tools, json]
+        limits: []
+  - slug: cerebras
+    name: Cerebras
+    base_url: https://api.cerebras.ai/v1
+    env_key_name: CEREBRAS_API_KEY
+    requires_card: false
+    requires_phone: unknown
+    uses_data_for_training: unknown
+    tier: 1
+    adapter: openai
+    models:
+      - name: llama-3.3-70b
+        alias: fast
+        priority: 20
+        weight: 2
+        context_max: 32768
+        capabilities: [text, tools, json]
+        limits: []
+  - slug: google-ai-studio
+    name: Google AI Studio
+    base_url: https://generativelanguage.googleapis.com/v1beta
+    env_key_name: GOOGLE_AI_STUDIO_API_KEY
+    requires_card: false
+    requires_phone: unknown
+    uses_data_for_training: unknown
+    tier: 2
+    adapter: google
+    models:
+      - name: gemini-2.0-flash
+        alias: balanced
+        priority: 30
+        weight: 2
+        context_max: 1048576
+        capabilities: [text, vision, tools, json]
+        limits: []
+  - slug: openrouter
+    name: OpenRouter
+    base_url: https://openrouter.ai/api/v1
+    env_key_name: OPENROUTER_API_KEY
+    requires_card: unknown
+    requires_phone: unknown
+    uses_data_for_training: unknown
+    tier: 3
+    adapter: openai
+    models: []
+  - slug: ollama
+    name: Ollama
+    base_url: http://localhost:11434/v1
+    env_key_name: OLLAMA_BASE_URL
+    requires_card: false
+    requires_phone: false
+    uses_data_for_training: false
+    tier: 4
+    adapter: openai
+    models: []
