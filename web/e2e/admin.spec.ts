@@ -68,7 +68,8 @@ test('login, create one-time key, list and revoke it', async ({ page }) => {
   await expect(page.getByText('La clave “Portal de pruebas” quedó revocada.')).toBeVisible()
 })
 
-test('API examples select an active key and model or automatic fallback', async ({ page }) => {
+test('API playground chats with a selected key/model and sends image attachments', async ({ page }) => {
+  let lastChat: { api_key_id: number; model: string; messages: { role: string; content: string | { type: string; image_url?: { url: string } }[] }[] } | undefined
   await page.route('**/admin/**', async (route) => {
     const { pathname } = new URL(route.request().url())
     if (pathname === '/admin/auth/login') {
@@ -82,7 +83,15 @@ test('API examples select an active key and model or automatic fallback', async 
     if (pathname === '/admin/playground/catalog') {
       await route.fulfill({ json: {
         api_keys: [{ id: 4, name: 'Aplicación web', prefix: 'a1b2c3d4', owner: null, requests_per_minute: 60 }],
-        models: [{ id: 'llama-3.3-70b-versatile', name: 'llama-3.3-70b-versatile', alias: null, provider: 'groq', provider_name: 'Groq' }],
+        models: [{ id: 'llama-3.3-70b-versatile', name: 'llama-3.3-70b-versatile', alias: null, provider: 'groq', provider_name: 'Groq', capabilities: ['text', 'vision'] }],
+      } })
+      return
+    }
+    if (pathname === '/admin/playground/chat' && route.request().method() === 'POST') {
+      lastChat = route.request().postDataJSON() as typeof lastChat
+      await route.fulfill({ json: {
+        choices: [{ message: { role: 'assistant', content: 'Respuesta de prueba de Relevo.' } }],
+        relevo: { model: lastChat?.model === 'auto' ? 'llama-3.3-70b-versatile' : lastChat?.model, provider: 'groq', attempts: 1 },
       } })
       return
     }
@@ -95,16 +104,32 @@ test('API examples select an active key and model or automatic fallback', async 
   await page.getByRole('button', { name: 'Entrar al panel' }).click()
   await page.getByRole('button', { name: 'Ejemplos API' }).click()
 
-  await expect(page.getByRole('heading', { name: 'Personaliza el ejemplo' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Chat API' })).toBeVisible()
   await expect(page.getByLabel('Clave API')).toContainText('Aplicación web')
-  await expect(page.getByLabel('Modelo')).toContainText('Automático · intenta otros modelos si uno falla')
-  await expect(page.getByLabel('Modelo')).toContainText('llama-3.3-70b-versatile · Groq')
+  await expect(page.getByLabel('Modelo')).toContainText('Automático · reintenta con otros modelos')
+  await expect(page.getByLabel('Modelo')).toContainText('llama-3.3-70b-versatile · Groq · visión')
 
   await page.getByLabel('Modelo').selectOption('llama-3.3-70b-versatile')
-  await expect(page.locator('.playground-code code')).toContainText('"model":"llama-3.3-70b-versatile"')
+  await page.getByLabel('Escribe un mensaje').fill('¿Qué aparece en esta imagen?')
+  await page.getByLabel('Subir imágenes').setInputFiles({
+    name: 'pixel.png',
+    mimeType: 'image/png',
+    buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/pXcAAAAASUVORK5CYII=', 'base64'),
+  })
+  await expect(page.getByAltText('pixel.png')).toBeVisible()
+  await page.getByRole('button', { name: 'Enviar mensaje' }).click()
+  await expect(page.getByText('Respuesta de prueba de Relevo.')).toBeVisible()
+  expect(lastChat?.api_key_id).toBe(4)
+  expect(lastChat?.model).toBe('llama-3.3-70b-versatile')
+  expect(lastChat?.messages[0].content).toEqual(expect.arrayContaining([
+    expect.objectContaining({ type: 'image_url', image_url: expect.objectContaining({ url: expect.stringMatching(/^data:image\/png;base64,/) }) }),
+  ]))
+
   await page.getByLabel('Modelo').selectOption('auto')
-  await expect(page.locator('.playground-code code')).toContainText('"model":"auto"')
-  await expect(page.locator('.playground-code code')).not.toContainText('rlv_a1b2c3d4_')
+  await page.getByLabel('Escribe un mensaje').fill('Continúa en modo automático')
+  await page.getByRole('button', { name: 'Enviar mensaje' }).click()
+  await expect(page.getByText('Respuesta de prueba de Relevo.').last()).toBeVisible()
+  expect(lastChat?.model).toBe('auto')
 })
 
 test('T061/T067/T071 parcial: navegador se conecta a FastAPI y gestiona una clave', async ({ page }) => {

@@ -110,7 +110,7 @@ async def complete_with_fallback(
         and estimated_context <= model.context_max
         and required.issubset(set(model.capabilities))
         and provider.adapter in {"openai", "google"}
-        and (provider.adapter != "google" or required <= {"text"})
+        and (provider.adapter != "google" or not required.intersection({"tools", "json"}))
         and (provider.slug != "ollama" or settings.router_enable_local_fallback)
         and provider_is_configured(settings, provider)
         and (

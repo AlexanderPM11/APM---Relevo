@@ -5,8 +5,9 @@ import './styles.css'
 type ApiKey = { id: number; name: string; prefix: string; owner: string | null; is_active: boolean; requests_per_minute: number }
 type CreatedKey = { id: number; name: string; prefix: string; api_key: string }
 type Admin = { email: string }
-type PlaygroundModel = { id: string; name: string; alias: string | null; provider: string; provider_name: string }
+type PlaygroundModel = { id: string; name: string; alias: string | null; provider: string; provider_name: string; capabilities: string[] }
 type PlaygroundCatalog = { api_keys: ApiKey[]; models: PlaygroundModel[] }
+type ChatEntry = { id: string; role: 'user' | 'assistant'; content: string; images: { name: string; data_url: string }[]; meta?: string }
 
 const TOKEN_SLOT = 'relevo.admin.session'
 
@@ -66,7 +67,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return response.json() as Promise<T>
 }
 
-function Icon({ name, size = 18 }: { name: 'key' | 'copy' | 'plus' | 'logout' | 'external' | 'check' | 'arrow' | 'shield' | 'code' | 'close' | 'trash' | 'refresh'; size?: number }) {
+function Icon({ name, size = 18 }: { name: 'key' | 'copy' | 'plus' | 'logout' | 'external' | 'check' | 'arrow' | 'shield' | 'code' | 'close' | 'trash' | 'refresh' | 'image'; size?: number }) {
   const common = { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.7, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const, 'aria-hidden': true as const }
   const paths: Record<typeof name, React.ReactNode> = {
     key: <><circle cx="8" cy="15" r="5"/><path d="m11.5 11.5 8-8 2 2-2 2 2 2-3 3-2-2-3.5 3.5"/></>,
@@ -81,6 +82,7 @@ function Icon({ name, size = 18 }: { name: 'key' | 'copy' | 'plus' | 'logout' | 
     close: <><path d="m18 6-12 12M6 6l12 12"/></>,
     trash: <><path d="M3 6h18M8 6V4h8v2m3 0-1 14H6L5 6m4 4v6m6-6v6"/></>,
     refresh: <><path d="M20 7v5h-5M4 17v-5h5"/><path d="M5.6 9a7 7 0 0 1 11.6-2L20 12M4 12l2.8 5a7 7 0 0 0 11.6-2"/></>,
+    image: <><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.5" cy="9" r="1.5"/><path d="m21 15-5-5L5 20"/></>,
   }
   return <svg {...common}>{paths[name]}</svg>
 }
@@ -220,7 +222,7 @@ function App() {
             </div>
             <div className="list-foot"><span>El secreto completo solo se muestra al crear la clave.</span><span><span className="tiny-pulse"/> Secreto visible una sola vez</span></div>
           </section>
-        </> : tab === 'connect' ? <ConnectGuide onCopy={copy} copied={copied} apiBase={apiBase} /> : <ApiPlayground catalog={playgroundCatalog} apiBase={apiBase} onCopy={copy} copied={copied} onManageKeys={() => setTab('keys')} onRefresh={() => void loadPlaygroundCatalog()} />}
+        </> : tab === 'connect' ? <ConnectGuide onCopy={copy} copied={copied} apiBase={apiBase} /> : <ApiPlayground catalog={playgroundCatalog} onManageKeys={() => setTab('keys')} onRefresh={() => void loadPlaygroundCatalog()} />}
         <footer className="page-footer"><span>RELEVO <b>·</b> ACCESO A MODELOS, EN UN SOLO LUGAR</span><a href="/openapi.json" target="_blank" rel="noreferrer">Referencia de API <Icon name="external" size={13}/></a></footer>
       </div>
     </main>
@@ -258,71 +260,99 @@ function ConfirmDialog({ keyInfo, onClose, onConfirm, returnFocus }: { keyInfo: 
   return <div className="modal-backdrop"><section ref={dialogRef} className="modal confirm-modal" role="dialog" aria-modal="true" aria-labelledby="revoke-title"><div className="revoke-mark"><Icon name="trash" size={20}/></div><h2 id="revoke-title">¿Revocar esta clave?</h2><p className="modal-description"><strong>{keyInfo.name}</strong> perderá acceso a Relevo de inmediato. Las aplicaciones que la usan dejarán de conectar.</p><div className="modal-actions"><button className="secondary-button" onClick={onClose}>Conservar clave</button><button className="danger-button" onClick={onConfirm}>Revocar acceso</button></div></section></div>
 }
 
-function ApiPlayground({ catalog, apiBase, onCopy, copied, onManageKeys, onRefresh }: { catalog: PlaygroundCatalog; apiBase: string; onCopy: (text: string, label: string) => void; copied: string; onManageKeys: () => void; onRefresh: () => void }) {
+function ApiPlayground({ catalog, onManageKeys, onRefresh }: { catalog: PlaygroundCatalog; onManageKeys: () => void; onRefresh: () => void }) {
   const [selectedKeyId, setSelectedKeyId] = useState('')
   const [selectedModel, setSelectedModel] = useState('auto')
-  const [language, setLanguage] = useState<'curl' | 'javascript' | 'python'>('curl')
-  const endpoint = `${apiBase}/v1/chat/completions`
+  const [draft, setDraft] = useState('')
+  const [images, setImages] = useState<{ name: string; data_url: string }[]>([])
+  const [messages, setMessages] = useState<ChatEntry[]>([])
+  const [sending, setSending] = useState(false)
+  const [chatError, setChatError] = useState('')
+  const imageInput = useRef<HTMLInputElement>(null)
+  const bottomRef = useRef<HTMLDivElement>(null)
   const selectedKey = catalog.api_keys.find((key) => String(key.id) === selectedKeyId) ?? catalog.api_keys[0]
   const model = selectedModel === 'auto' || catalog.models.some((item) => item.id === selectedModel) ? selectedModel : 'auto'
-  const modelJson = JSON.stringify(model)
-  const keyComment = selectedKey ? `Clave elegida: ${selectedKey.name} (rlv_${selectedKey.prefix}…)` : 'Selecciona o crea una clave API activa.'
-  const samples = {
-    curl: [
-      `# ${keyComment}`,
-      `curl ${endpoint} -H 'Authorization: Bearer $RELEVO_API_KEY' -H 'Content-Type: application/json' -d '${JSON.stringify({ model, messages: [{ role: 'user', content: 'Hola, ¿qué puedes hacer?' }] })}'`,
-    ].join('\n'),
-    javascript: [
-      `// ${keyComment}`,
-      `const response = await fetch('${endpoint}', {`,
-      "  method: 'POST',",
-      '  headers: {',
-      "    Authorization: `Bearer ${process.env.RELEVO_API_KEY}`,",
-      "    'Content-Type': 'application/json',",
-      '  },',
-      '  body: JSON.stringify({',
-      `    model: ${modelJson},`,
-      "    messages: [{ role: 'user', content: 'Hola, ¿qué puedes hacer?' }],",
-      '  }),',
-      '});',
-      'const result = await response.json();',
-      'console.log(result.choices?.[0]?.message?.content);',
-    ].join('\n'),
-    python: [
-      `# ${keyComment}`,
-      'import os',
-      'from openai import OpenAI',
-      '',
-      'client = OpenAI(',
-      `    base_url="${apiBase}/v1",`,
-      '    api_key=os.environ["RELEVO_API_KEY"],',
-      ')',
-      '',
-      'response = client.chat.completions.create(',
-      `    model=${modelJson},`,
-      '    messages=[{"role": "user", "content": "Hola, ¿qué puedes hacer?"}],',
-      ')',
-      'print(response.choices[0].message.content)',
-    ].join('\n'),
+  const selectedModelInfo = catalog.models.find((item) => item.id === model)
+
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' }) }, [messages, sending])
+
+  async function addImages(files: FileList | null) {
+    if (!files?.length) return
+    setChatError('')
+    const chosen = Array.from(files).filter((file) => file.type.startsWith('image/'))
+    if (chosen.length !== files.length) setChatError('Solo puedes adjuntar archivos de imagen.')
+    const room = Math.max(0, 4 - images.length)
+    const accepted = chosen.slice(0, room).filter((file) => file.size <= 5 * 1024 * 1024)
+    if (chosen.length > room) setChatError('Puedes adjuntar hasta 4 imágenes por mensaje.')
+    if (accepted.length !== Math.min(chosen.length, room)) setChatError('Cada imagen debe pesar como máximo 5 MB.')
+    try {
+      const loaded = await Promise.all(accepted.map((file) => new Promise<{ name: string; data_url: string }>((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => resolve({ name: file.name, data_url: String(reader.result) })
+        reader.onerror = () => reject(new Error(`No se pudo leer ${file.name}.`))
+        reader.readAsDataURL(file)
+      })))
+      setImages((current) => [...current, ...loaded])
+    } catch (error) { setChatError(error instanceof Error ? error.message : 'No se pudieron leer las imágenes.') }
+    if (imageInput.current) imageInput.current.value = ''
   }
+
+  async function sendMessage(content = draft) {
+    const text = content.trim()
+    if ((!text && !images.length) || !selectedKey || sending) return
+    const userEntry: ChatEntry = { id: crypto.randomUUID(), role: 'user', content: text, images }
+    const conversation = [...messages, userEntry]
+    setMessages(conversation)
+    setDraft('')
+    setImages([])
+    setChatError('')
+    setSending(true)
+    const apiMessages = conversation.map((entry) => ({
+      role: entry.role,
+      content: entry.images.length
+        ? [ ...(entry.content ? [{ type: 'text', text: entry.content }] : []), ...entry.images.map((image) => ({ type: 'image_url', image_url: { url: image.data_url } })) ]
+        : entry.content,
+    }))
+    try {
+      const completion = await request<{ choices?: { message?: { content?: string | { type?: string; text?: string }[] } }[]; relevo?: { model: string; provider: string; attempts: number } }>('/admin/playground/chat', {
+        method: 'POST',
+        body: JSON.stringify({ api_key_id: selectedKey.id, model, messages: apiMessages }),
+      })
+      const rawContent = completion.choices?.[0]?.message?.content
+      const answer = typeof rawContent === 'string' ? rawContent : Array.isArray(rawContent) ? rawContent.map((part) => part.text ?? '').join('') : ''
+      if (!answer) throw new Error('El modelo respondió sin contenido de texto.')
+      const meta = completion.relevo ? `${completion.relevo.model} · ${completion.relevo.provider} · ${completion.relevo.attempts} ${completion.relevo.attempts === 1 ? 'intento' : 'intentos'}` : undefined
+      setMessages((current) => [...current, { id: crypto.randomUUID(), role: 'assistant', content: answer, images: [], meta }])
+    } catch (error) {
+      setChatError(error instanceof Error ? error.message : 'No se pudo completar la solicitud.')
+    } finally { setSending(false) }
+  }
+
   return <>
-    <section className="page-heading playground-heading"><div><div className="eyebrow"><span className="eyebrow-line"/>PRUEBA Y CONSTRUYE</div><h1>Una llamada.<br/><em>Tu elección.</em></h1><p className="intro">Elige la clave de tu aplicación y un modelo disponible. Copia el ejemplo listo para integrar.</p></div><div className="playground-orbit" aria-hidden="true"><span>API</span><i/><i/><i/></div></section>
-    <section className="playground-panel">
-      <div className="playground-panel-head"><div><span className="section-kicker">CONFIGURA TU SOLICITUD</span><h2>Personaliza el ejemplo</h2></div><span className="available-count"><i/>{catalog.models.length} {catalog.models.length === 1 ? 'modelo disponible' : 'modelos disponibles'}</span></div>
-      <div className="playground-controls">
-        <label className="playground-field"><span>Clave API de tu aplicación</span><select aria-label="Clave API" value={selectedKey?.id ?? ''} onChange={(event) => setSelectedKeyId(event.target.value)} disabled={!catalog.api_keys.length}><option value="" disabled>{catalog.api_keys.length ? 'Selecciona una clave' : 'No hay claves activas'}</option>{catalog.api_keys.map((key) => <option key={key.id} value={key.id}>{key.name} · rlv_{key.prefix}</option>)}</select><small>La clave completa solo se muestra al crearla. El código usará <code>RELEVO_API_KEY</code>.</small></label>
-        <label className="playground-field"><span>Modelo para la llamada</span><select aria-label="Modelo" value={model} onChange={(event) => setSelectedModel(event.target.value)}><option value="auto">Automático · intenta otros modelos si uno falla</option>{catalog.models.map((item) => <option key={`${item.provider}-${item.id}`} value={item.id}>{item.id} · {item.provider_name}</option>)}</select><small>Automático usa el enrutador y sus reintentos. Elige un modelo para fijar la llamada.</small></label>
+    <section className="page-heading playground-heading"><div><div className="eyebrow"><span className="eyebrow-line"/>CHAT DE PRUEBA</div><h1>Habla con<br/><em>tus modelos.</em></h1><p className="intro">Prueba la API de Relevo en una conversación real, con texto e imágenes.</p></div><div className="playground-orbit" aria-hidden="true"><span>AI</span><i/><i/><i/></div></section>
+    <section className="playground-panel chat-playground">
+      <div className="playground-panel-head chat-panel-head"><div><span className="section-kicker">TU ESPACIO DE PRUEBAS</span><h2>Chat API</h2></div><div className="chat-head-actions"><span className="available-count"><i/>{catalog.models.length} {catalog.models.length === 1 ? 'modelo' : 'modelos'}</span><button className="secondary-button new-chat-button" onClick={() => { setMessages([]); setImages([]); setDraft(''); setChatError('') }}>Nueva conversación</button></div></div>
+      <div className="playground-controls chat-controls">
+        <label className="playground-field"><span>Clave API</span><select aria-label="Clave API" value={selectedKey?.id ?? ''} onChange={(event) => setSelectedKeyId(event.target.value)} disabled={!catalog.api_keys.length}><option value="" disabled>{catalog.api_keys.length ? 'Selecciona una clave' : 'No hay claves activas'}</option>{catalog.api_keys.map((key) => <option key={key.id} value={key.id}>{key.name} · rlv_{key.prefix}</option>)}</select></label>
+        <label className="playground-field"><span>Modelo</span><select aria-label="Modelo" value={model} onChange={(event) => setSelectedModel(event.target.value)}><option value="auto">Automático · reintenta con otros modelos</option>{catalog.models.map((item) => <option key={`${item.provider}-${item.id}`} value={item.id}>{item.id} · {item.provider_name}{item.capabilities.includes('vision') ? ' · visión' : ''}</option>)}</select><small>{model === 'auto' ? 'Con imágenes, el enrutador prioriza modelos compatibles con visión.' : selectedModelInfo?.capabilities.includes('vision') ? 'Este modelo admite imágenes.' : 'Este modelo no admite imágenes; usa Automático o elige uno con visión.'}</small></label>
+        <button className="icon-button chat-refresh" onClick={onRefresh} title="Actualizar modelos" aria-label="Actualizar modelos"><Icon name="refresh" size={17}/></button>
       </div>
-      {!catalog.api_keys.length && <div className="playground-empty"><span>No hay claves activas para esta integración.</span><button className="text-action" onClick={onManageKeys}>Crear una clave <Icon name="arrow" size={15}/></button></div>}
-      {catalog.models.length === 0 && <div className="playground-empty"><span>No hay modelos configurados con credenciales de proveedor disponibles.</span></div>}
-      <div className="playground-code-head"><div><span className="section-kicker">EJEMPLO DE SOLICITUD</span><p>POST <code>{endpoint}</code></p></div><button className="code-copy" onClick={() => void onCopy(samples[language], 'playground-snippet')}><Icon name={copied === 'playground-snippet' ? 'check' : 'copy'} size={14}/>{copied === 'playground-snippet' ? 'Copiado' : 'Copiar código'}</button></div>
-      <div className="code-window playground-code"><div className="code-top"><div className="code-lights"><i/><i/><i/></div><div className="code-tabs">{(['curl', 'javascript', 'python'] as const).map((item) => <button key={item} className={language === item ? 'selected' : ''} onClick={() => setLanguage(item)}>{item === 'javascript' ? 'Node.js' : item === 'python' ? 'Python' : 'cURL'}</button>)}</div></div><pre><code>{samples[language]}</code></pre></div>
-      <div className="playground-note"><Icon name="shield" size={16}/><span>El ejemplo nunca incluye el secreto: guárdalo en <code>RELEVO_API_KEY</code> en el servidor de tu aplicación, no en el navegador.</span></div>
+      {!catalog.api_keys.length && <div className="playground-empty chat-empty-warning"><span>Crea una clave para atribuir esta conversación a una aplicación y aplicar sus límites.</span><button className="text-action" onClick={onManageKeys}>Crear una clave <Icon name="arrow" size={15}/></button></div>}
+      {!catalog.models.length && <div className="playground-empty chat-empty-warning"><span>No hay modelos disponibles. Configura una credencial de proveedor y habilita modelos.</span></div>}
+      <div className="chat-transcript" role="log" aria-live="polite" aria-label="Conversación con el modelo">
+        {!messages.length && <div className="chat-welcome"><span className="chat-welcome-mark">r</span><h3>¿Qué te gustaría explorar?</h3><p>La conversación se enviará a través de tu API de Relevo. Prueba un modelo o deja que el enrutador elija.</p><div className="prompt-suggestions">{['Resume una idea en tres puntos', '¿Qué puedes hacer con una imagen?', 'Explícame un concepto de forma sencilla'].map((prompt) => <button key={prompt} onClick={() => setDraft(prompt)}>{prompt}<Icon name="arrow" size={14}/></button>)}</div></div>}
+        {messages.map((entry) => <article className={`chat-message ${entry.role}`} key={entry.id}><div className="chat-avatar">{entry.role === 'assistant' ? 'r' : 'TÚ'}</div><div className="chat-message-body"><div className="chat-message-name">{entry.role === 'assistant' ? 'Relevo' : 'Tú'}</div>{entry.images.map((image) => <img className="chat-image" key={image.data_url.slice(0, 48)} src={image.data_url} alt={image.name}/>)}{entry.content && <p>{entry.content}</p>}{entry.meta && <small className="chat-meta">{entry.meta}</small>}</div></article>)}
+        {sending && <article className="chat-message assistant"><div className="chat-avatar">r</div><div className="chat-message-body"><div className="chat-message-name">Relevo</div><div className="typing-indicator" aria-label="El modelo está respondiendo"><i/><i/><i/></div></div></article>}
+        <div ref={bottomRef}/>
+      </div>
+      {chatError && <div className="chat-error" role="alert">{chatError}</div>}
+      {images.length > 0 && <div className="image-attachments" aria-label="Imágenes adjuntas">{images.map((image, index) => <div className="image-attachment" key={image.data_url.slice(0, 48)}><img src={image.data_url} alt={image.name}/><span title={image.name}>{image.name}</span><button onClick={() => setImages((current) => current.filter((_, itemIndex) => itemIndex !== index))} aria-label={`Quitar ${image.name}`}><Icon name="close" size={14}/></button></div>)}</div>}
+      <form className="chat-composer" onSubmit={(event) => { event.preventDefault(); void sendMessage() }}><input ref={imageInput} className="visually-hidden" type="file" accept="image/*" multiple aria-label="Subir imágenes" onChange={(event) => void addImages(event.currentTarget.files)}/><button type="button" className="icon-button attach-button" onClick={() => imageInput.current?.click()} title="Adjuntar imágenes" aria-label="Adjuntar imágenes" disabled={sending || images.length >= 4}><Icon name="image" size={19}/></button><textarea aria-label="Escribe un mensaje" value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void sendMessage() } }} placeholder={selectedKey ? 'Escribe tu mensaje… (Enter para enviar, Shift + Enter para nueva línea)' : 'Crea una clave API para empezar'} rows={2} disabled={!selectedKey || sending}/><button className="send-chat-button" type="submit" aria-label="Enviar mensaje" disabled={!selectedKey || sending || (!draft.trim() && !images.length)}><Icon name="arrow" size={18}/></button></form>
+      <div className="chat-footnote"><span><Icon name="shield" size={14}/> Tu clave no se revela al navegador y se respetan sus límites.</span><span>Imágenes: máx. 5 MB cada una · 4 por mensaje</span></div>
     </section>
-    <section className="playground-models"><div className="playground-models-title"><div><span className="section-kicker">CATÁLOGO ENRUTABLE</span><h2>Modelos disponibles</h2></div><button className="text-action" onClick={onRefresh}>Actualizar catálogo <Icon name="refresh" size={15}/></button></div>{catalog.models.length ? <div className="model-chip-list">{catalog.models.map((item) => <span className="model-chip" key={`${item.provider}-${item.id}`}><i/>{item.id}<small>{item.provider_name}</small></span>)}</div> : <p className="catalog-empty">Configura una credencial de proveedor y habilita sus modelos para que aparezcan aquí.</p>}</section>
+    <section className="playground-models"><div className="playground-models-title"><div><span className="section-kicker">CATÁLOGO ENRUTABLE</span><h2>Modelos disponibles</h2></div><span className="catalog-refresh-label">Actualizado al entrar en esta pestaña</span></div>{catalog.models.length ? <div className="model-chip-list">{catalog.models.map((item) => <span className="model-chip" key={`${item.provider}-${item.id}`}><i/>{item.id}{item.capabilities.includes('vision') && <span className="model-capability">Visión</span>}<small>{item.provider_name}</small></span>)}</div> : <p className="catalog-empty">Configura una credencial de proveedor y habilita sus modelos para que aparezcan aquí.</p>}</section>
   </>
 }
-
 function ConnectGuide({ onCopy, copied, apiBase }: { onCopy: (text: string, label: string) => void; copied: string; apiBase: string }) {
   const [language, setLanguage] = useState<'curl' | 'javascript' | 'python'>('curl')
   const endpoint = `${apiBase}/v1`

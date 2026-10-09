@@ -161,6 +161,22 @@ async def test_playground_catalog_requires_admin_and_only_returns_safe_key_metad
 
 
 @pytest.mark.asyncio
+async def test_playground_chat_rejects_unknown_consumer_key(api_client: AsyncClient) -> None:
+    token = await admin_token(api_client)
+    response = await api_client.post(
+        "/admin/playground/chat",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "api_key_id": 999,
+            "model": "auto",
+            "messages": [{"role": "user", "content": "Hola"}],
+        },
+    )
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Active API key not found"
+
+
+@pytest.mark.asyncio
 async def test_api_key_limits_match_the_admin_console(api_client: AsyncClient) -> None:
     token = await admin_token(api_client)
     headers = {"Authorization": f"Bearer {token}"}

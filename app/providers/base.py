@@ -99,6 +99,32 @@ class GoogleAIStudioAdapter:
     async def chat(self, model: str, payload: dict[str, Any]) -> dict[str, Any]:
         """Translate a basic text chat request and normalize the Gemini response."""
         messages = payload.get("messages", [])
+
+        def google_parts(content: Any) -> list[dict[str, Any]]:
+            if isinstance(content, str):
+                return [{"text": content}]
+            parts: list[dict[str, Any]] = []
+            for part in content if isinstance(content, list) else []:
+                if not isinstance(part, dict):
+                    continue
+                if part.get("type") == "text":
+                    parts.append({"text": str(part.get("text", ""))})
+                    continue
+                if part.get("type") != "image_url":
+                    continue
+                image = part.get("image_url", {})
+                url = image.get("url", "") if isinstance(image, dict) else ""
+                if not isinstance(url, str) or not url.startswith("data:") or "," not in url:
+                    raise ProviderError(400, "Google image requests require a base64 data URL")
+                header, data = url[5:].split(",", maxsplit=1)
+                mime_type = header.split(";", maxsplit=1)[0]
+                if "base64" not in header or not mime_type.startswith("image/"):
+                    raise ProviderError(
+                        400, "Google image requests require a base64 image data URL"
+                    )
+                parts.append({"inlineData": {"mimeType": mime_type, "data": data}})
+            return parts
+
         system_parts = [
             {"text": str(message.get("content", ""))}
             for message in messages
@@ -107,7 +133,7 @@ class GoogleAIStudioAdapter:
         contents = [
             {
                 "role": "model" if message.get("role") == "assistant" else "user",
-                "parts": [{"text": str(message.get("content", ""))}],
+                "parts": google_parts(message.get("content", "")),
             }
             for message in messages
             if message.get("role") != "system"

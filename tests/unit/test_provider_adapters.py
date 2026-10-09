@@ -92,3 +92,41 @@ async def test_google_adapter_translates_chat_messages() -> None:
     payload = route.calls[0].request.content
     assert b'"systemInstruction"' in payload
     assert b'"generationConfig"' in payload
+
+
+@pytest.mark.asyncio
+async def test_google_adapter_translates_base64_images() -> None:
+    """Gemini receives image parts as inlineData while retaining adjacent text."""
+    with respx.mock(assert_all_called=True) as mock:
+        route = mock.post(
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-test:generateContent"
+        ).mock(
+            return_value=httpx.Response(
+                200,
+                json={"candidates": [{"content": {"parts": [{"text": "A cat"}]}}]},
+            )
+        )
+        adapter = GoogleAIStudioAdapter(
+            "https://generativelanguage.googleapis.com/v1beta", "secret", 5
+        )
+        await adapter.chat(
+            "gemini-test",
+            {
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": "What is in this picture?"},
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": "data:image/png;base64,aGVsbG8="},
+                            },
+                        ],
+                    }
+                ]
+            },
+        )
+
+    payload = route.calls[0].request.content
+    assert b'"text":"What is in this picture?"' in payload
+    assert b'"inlineData":{"mimeType":"image/png","data":"aGVsbG8="}' in payload

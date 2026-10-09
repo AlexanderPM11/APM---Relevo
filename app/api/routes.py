@@ -53,6 +53,12 @@ class ApiKeyCreate(BaseModel):
     requests_per_minute: int = Field(default=60, gt=0, le=10000)
 
 
+class PlaygroundChatRequest(ChatCompletionRequest):
+    """Administrator playground request attributed to one consumer key."""
+
+    api_key_id: int
+
+
 class ProviderInput(BaseModel):
     """Provider metadata editable without exposing credentials."""
 
@@ -136,6 +142,11 @@ async def chat_completions(
     completion["model"] = (
         request.model if request.model not in ("auto", model.alias) else model.alias or model.name
     )
+    completion["relevo"] = {
+        "model": model.name,
+        "provider": provider.slug,
+        "attempts": attempts,
+    }
     return completion
 
 
@@ -163,6 +174,66 @@ async def available_models(
         or model.health.cooldown_until <= now
     ]
     return {"object": "list", "data": data}
+
+
+@router.post("/admin/playground/chat", dependencies=[admin_guard()])
+async def playground_chat(
+    body: PlaygroundChatRequest, response: Response, session: SessionDep
+) -> dict[str, Any]:
+    """Run a real chat from the console, applying the selected key's limits and usage log."""
+    api_key = await session.get(ApiKey, body.api_key_id)
+    now = datetime.now(UTC).replace(tzinfo=None)
+    if (
+        api_key is None
+        or not api_key.is_active
+        or (api_key.expires_at and api_key.expires_at <= now)
+    ):
+        raise HTTPException(404, "Active API key not found")
+    settings = get_settings()
+    if not await allow_request(
+        f"api-key:{api_key.id}", api_key.requests_per_minute, 60
+    ):
+        raise HTTPException(429, "API key rate limit exceeded", headers={"Retry-After": "60"})
+    api_key.last_used_at = now
+    payload = body.model_dump(exclude={"api_key_id", "model", "stream"}, exclude_none=True)
+    started = time.monotonic()
+    try:
+        completion, model, provider, attempts = await complete_with_fallback(
+            session, settings, body.model, payload
+        )
+    except ProviderError as error:
+        session.add(
+            RequestLog(
+                api_key_id=api_key.id,
+                requested_model=body.model,
+                attempts=error.attempts,
+                status="error",
+                latency_ms=int((time.monotonic() - started) * 1000),
+                error_code=f"upstream_{error.status_code}",
+            )
+        )
+        await session.commit()
+        raise HTTPException(error.status_code, error.message) from error
+    usage = completion.get("usage", {})
+    session.add(
+        RequestLog(
+            api_key_id=api_key.id,
+            requested_model=body.model,
+            final_model=model.name,
+            attempts=attempts,
+            status="success",
+            latency_ms=int((time.monotonic() - started) * 1000),
+            input_tokens=int(usage.get("prompt_tokens", 0)),
+            output_tokens=int(usage.get("completion_tokens", 0)),
+        )
+    )
+    await session.commit()
+    response.headers["X-Relevo-Model"] = model.name
+    response.headers["X-Relevo-Provider"] = provider.slug
+    response.headers["X-Relevo-Attempts"] = str(attempts)
+    completion["model"] = body.model if body.model != "auto" else model.alias or model.name
+    completion["relevo"] = {"model": model.name, "provider": provider.slug, "attempts": attempts}
+    return completion
 
 
 @router.post("/admin/auth/login")
@@ -303,11 +374,18 @@ async def playground_catalog(session: SessionDep) -> dict[str, Any]:
             "alias": model.alias,
             "provider": provider.slug,
             "provider_name": provider.name,
+            "capabilities": model.capabilities,
         }
         for model, provider in models_result.all()
         if provider.adapter in {"openai", "google"}
         and (provider.slug != "ollama" or settings.router_enable_local_fallback)
         and provider_is_configured(settings, provider)
+        and (
+            model.health is None
+            or model.health.state != "open"
+            or model.health.cooldown_until is not None
+            and model.health.cooldown_until <= now
+        )
         and (
             model.health is None
             or model.health.cooldown_until is None
