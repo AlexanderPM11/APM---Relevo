@@ -15,7 +15,9 @@
     "@sentry/react": "^11.6.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
+    "react-markdown": "^10.1.0",
     "react-router-dom": "^7.18.4",
+    "remark-gfm": "^4.0.1",
     "web-vitals": "^6.2.3"
   },
   "devDependencies": {

@@ -1,23 +1,43 @@
-import { Fragment, type ReactNode } from 'react'
+import { isValidElement, useState, type ReactElement, type ReactNode } from 'react'
+import Markdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 
-function inline(text: string): ReactNode[] {
-  return text.split(/(\*\*[^*]+\*\*|`[^`]+`)/g).map((part, index) => part.startsWith('**') && part.endsWith('**') ? <strong key={index}>{part.slice(2, -2)}</strong> : part.startsWith('`') && part.endsWith('`') ? <code key={index}>{part.slice(1, -1)}</code> : part)
+function CodeBlock({ children }: { children?: ReactNode }) {
+  if (!isValidElement(children)) return <pre>{children}</pre>
+
+  const code = children as ReactElement<{ children?: ReactNode; className?: string }>
+  const language = code.props.className?.match(/language-([\w+-]+)/)?.[1]
+  const source = String(code.props.children ?? '').replace(/\n$/, '')
+
+  return <ResponseCodeBlock language={language} source={source}/>
 }
+
+function ResponseCodeBlock({ language, source }: { language?: string; source: string }) {
+  const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'error'>('idle')
+
+  async function copyCode() {
+    try {
+      await navigator.clipboard.writeText(source)
+      setCopyStatus('copied')
+      window.setTimeout(() => setCopyStatus('idle'), 1600)
+    } catch { setCopyStatus('error') }
+  }
+
+  return <div className="pg-code-block">
+    <div className="pg-code-heading"><span>{language ?? 'Código'}</span><button type="button" onClick={(event) => {
+      event.preventDefault()
+      void copyCode()
+    }} aria-label={copyStatus === 'copied' ? 'Código copiado' : copyStatus === 'error' ? 'No se pudo copiar el código' : 'Copiar código'}>{copyStatus === 'copied' ? 'Copiado' : copyStatus === 'error' ? 'Error al copiar' : 'Copiar'}</button></div>
+    <pre><code className={language ? `language-${language}` : undefined}>{source}</code></pre>
+  </div>
+}
+
 export function ResponseText({ text }: { text: string }) {
-  const sections = text.split(/```/g)
-  return <div className="pg-response-text">{sections.map((section, index) => {
-    if (index % 2) {
-      const newline = section.indexOf('\n')
-      const language = newline >= 0 ? section.slice(0, newline).trim() : ''
-      const code = newline >= 0 ? section.slice(newline + 1) : section
-      return <div className="pg-code-block" key={index}>{language && <span>{language}</span>}<pre><code>{code}</code></pre></div>
-    }
-    return <Fragment key={index}>{section.split(/\n\s*\n/).filter(Boolean).map((paragraph, part) => {
-      if (/^#{1,6}\s/.test(paragraph)) return <h3 key={part}>{inline(paragraph.replace(/^#{1,6}\s/, ''))}</h3>
-      const lines = paragraph.split('\n')
-      if (lines.every((line) => /^\s*[-*]\s/.test(line))) return <ul key={part}>{lines.map((line, i) => <li key={i}>{inline(line.replace(/^\s*[-*]\s/, ''))}</li>)}</ul>
-      if (lines.every((line) => /^\s*\d+[.)]\s/.test(line))) return <ol key={part}>{lines.map((line, i) => <li key={i}>{inline(line.replace(/^\s*\d+[.)]\s/, ''))}</li>)}</ol>
-      return <p key={part}>{inline(paragraph)}</p>
-    })}</Fragment>
-  })}</div>
+  return <div className="pg-response-text">
+    <Markdown remarkPlugins={[remarkGfm]} components={{
+      pre: CodeBlock,
+      table: ({ children }) => <div className="pg-table-scroll" role="region" aria-label="Tabla de la respuesta" tabIndex={0}><table>{children}</table></div>,
+      a: ({ href, children }) => <a href={href} target={href?.startsWith('#') ? undefined : '_blank'} rel={href?.startsWith('#') ? undefined : 'noreferrer'}>{children}</a>,
+    }}>{text}</Markdown>
+  </div>
 }
