@@ -12,9 +12,13 @@ Use Python 3.12 and Docker Compose. Copy `.env.example` to `.env`, replace the l
 
 For front-end development, start the API on port 8000, then run `npm ci` and `npm run dev` from `web/`. Open `http://localhost:5173/console/`; Vite proxies API requests to the local server. In the production Docker image, the React build is served by FastAPI on the same origin, so no separate front-end service or CORS configuration is required.
 
+Set `API_PUBLIC_BASE_URL` to the public API origin when Relevo is behind a proxy or has a separate public hostname. The connection guide reads this value from `/console-config`; when unset, it uses the origin received by FastAPI.
+
 The console lets administrators create, list, search, and revoke user API keys. A new key's full secret is shown once; save it as `RELEVO_API_KEY` in the connecting application's server-side environment. The **Conectar una app** guide includes cURL, Node.js, and Python examples for the OpenAI-compatible `/v1/chat/completions` endpoint. Never put a Relevo key in browser code or commit it to source control.
 
-Run backend unit and API-route tests with `.venv/Scripts/python -m pytest tests/unit`. They use isolated SQLite tables for the admin API. Run the browser flows and accessibility checks with `npm run test:e2e` from `web/`; Playwright starts Vite and stubs admin responses so these checks do not need provider credentials or a running database. Test results are written to `test-results/frontend-test-report.json`.
+Run backend unit and API-route tests with `.venv/Scripts/python -m pytest tests/unit`. They use isolated SQLite tables for the admin API. Run `npm run test:e2e` from `web/` for the browser and HTTP integration checks: Playwright starts FastAPI with a fresh in-memory SQLite database and starts Vite, so it does not touch the normal database or require provider credentials. Four UI scenarios use mocked responses; browser-to-FastAPI and API scenarios use the real local backend. The suite checks 320–1440 px widths, axe accessibility, and keyboard focus. Results are written to `test-results/frontend-test-report.json`, with browser evidence in `output/playwright/`.
+
+The Playwright API and browser integration uses this disposable database instead of MySQL. Run the separate MySQL deployment and migration checks when Docker or an isolated MySQL test service is available.
 
 Install development dependencies with `python -m pip install -e '.[dev]'`. Run quality checks with `ruff check .`, `ruff format --check .`, `mypy app`, and `pytest`.
 

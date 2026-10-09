@@ -1,8 +1,17 @@
 import { defineConfig, devices } from '@playwright/test'
 import path from 'node:path'
+import { mkdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
 const workspace = path.resolve(fileURLToPath(new URL('..', import.meta.url)))
+const testOutput = path.join(workspace, 'output', 'playwright')
+mkdirSync(testOutput, { recursive: true })
+
+process.env.RELEVO_E2E_API_URL ??= 'http://127.0.0.1:8765'
+process.env.RELEVO_E2E_ADMIN_EMAIL ??= 'playwright-admin@example.com'
+process.env.RELEVO_E2E_ADMIN_PASSWORD ??= 'playwright-only-password'
+const python = process.env.RELEVO_TEST_PYTHON
+  ?? (process.platform === 'win32' ? path.join(workspace, '.venv', 'Scripts', 'python.exe') : 'python')
 
 export default defineConfig({
   testDir: './e2e',
@@ -21,11 +30,30 @@ export default defineConfig({
     screenshot: 'only-on-failure',
     ...devices['Desktop Chrome'],
   },
-  webServer: {
-    command: 'npm run dev -- --host 127.0.0.1 --strictPort',
-    url: 'http://127.0.0.1:5173/console/',
-    cwd: fileURLToPath(new URL('.', import.meta.url)),
-    reuseExistingServer: !process.env.CI,
-    timeout: 60_000,
-  },
+  webServer: [
+    {
+      command: `"${python}" -m uvicorn app.main:app --host 127.0.0.1 --port 8765`,
+      url: 'http://127.0.0.1:8765/health',
+      cwd: workspace,
+      env: {
+        APP_ENV: 'development',
+        DATABASE_URL: 'sqlite+aiosqlite:///:memory:',
+        DATABASE_AUTO_CREATE: 'true',
+        ADMIN_EMAIL: process.env.RELEVO_E2E_ADMIN_EMAIL,
+        ADMIN_PASSWORD: process.env.RELEVO_E2E_ADMIN_PASSWORD,
+        JWT_SECRET: 'playwright-only-jwt-secret-long-enough-for-tests',
+        API_KEY_PEPPER: 'playwright-only-api-key-pepper-long-enough',
+      },
+      reuseExistingServer: false,
+      timeout: 60_000,
+    },
+    {
+      command: 'npm run dev -- --host 127.0.0.1 --strictPort',
+      url: 'http://127.0.0.1:5173/console/',
+      cwd: fileURLToPath(new URL('.', import.meta.url)),
+      env: { RELEVO_DEV_API_TARGET: 'http://127.0.0.1:8765' },
+      reuseExistingServer: !process.env.CI,
+      timeout: 60_000,
+    },
+  ],
 })

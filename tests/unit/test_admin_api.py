@@ -128,3 +128,29 @@ async def test_api_key_rate_limit_must_be_positive(api_client: AsyncClient) -> N
         json={"name": "Portal", "requests_per_minute": 0},
     )
     assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_api_key_limits_match_the_admin_console(api_client: AsyncClient) -> None:
+    token = await admin_token(api_client)
+    headers = {"Authorization": f"Bearer {token}"}
+    accepted = await api_client.post(
+        "/admin/api-keys",
+        headers=headers,
+        json={"name": "A" * 120, "owner": "B" * 120, "requests_per_minute": 10000},
+    )
+    assert accepted.status_code == 201
+
+    too_many_requests = await api_client.post(
+        "/admin/api-keys",
+        headers=headers,
+        json={"name": "Portal", "requests_per_minute": 10001},
+    )
+    assert too_many_requests.status_code == 422
+
+    owner_too_long = await api_client.post(
+        "/admin/api-keys",
+        headers=headers,
+        json={"name": "Portal", "owner": "B" * 121},
+    )
+    assert owner_too_long.status_code == 422

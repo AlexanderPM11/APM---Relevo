@@ -15,6 +15,7 @@ from app.api.routes import router as api_router
 from app.core.config import get_settings
 from app.core.security import hash_password
 from app.core.seed import load_seed
+from app.db.base import Base
 from app.db.models import AdminUser
 from app.db.session import SessionLocal, engine
 
@@ -22,6 +23,9 @@ from app.db.session import SessionLocal, engine
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     """Initialize and release process-level resources."""
+    if settings.database_auto_create:
+        async with engine.begin() as connection:
+            await connection.run_sync(Base.metadata.create_all)
     async with SessionLocal() as session:
         if settings.admin_email and settings.admin_password:
             result = await session.execute(select(AdminUser).limit(1))
@@ -78,6 +82,12 @@ async def security_headers(
 async def health() -> dict[str, str]:
     """Report that the API process is alive."""
     return {"status": "ok"}
+
+
+@app.get("/console-config", tags=["operations"])
+async def console_config(request: Request) -> dict[str, str]:
+    """Expose the public API origin for copyable console examples."""
+    return {"api_base_url": (settings.api_public_base_url or str(request.base_url).rstrip("/"))}
 
 
 @app.get("/ready", tags=["operations"])

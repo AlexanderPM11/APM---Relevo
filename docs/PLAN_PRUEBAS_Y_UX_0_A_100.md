@@ -2,7 +2,7 @@
 
 Documento de trabajo para implementar, verificar y publicar Relevo con una API confiable y una consola administrativa adaptable a móvil, tablet y PC.
 
-**Fecha:** 8 de octubre de 2026, America/La_Paz. **Responsables:** desarrollo, diseño y verificación. **Alcance:** FastAPI, autenticación, claves de consumidores, proveedores, modelos, cuotas, selección y fallback, registros, operación y consola React.
+**Fecha:** 9 de octubre de 2026, America/La_Paz. **Responsables:** desarrollo, diseño y verificación. **Alcance:** FastAPI, autenticación, claves de consumidores, proveedores, modelos, cuotas, selección y fallback, registros, operación y consola React.
 
 El objetivo es que una persona pueda entrar al panel, crear una clave, conectar su aplicación y revocar ese acceso, con resultados comprobados desde el navegador hasta MySQL. Este documento define 100 escenarios de prueba y un plan de ejecución con entregables y condiciones para avanzar. Los 100 puntos del plan representan hitos de trabajo; no equivalen a un porcentaje de cobertura de código ni a pruebas ya aprobadas.
 
@@ -10,15 +10,17 @@ El objetivo es que una persona pueda entrar al panel, crear una clave, conectar 
 
 | Área | Evidencia disponible | Límite de la evidencia |
 |---|---|---|
-| Navegador | El informe `test-results/frontend-test-report.json` registra 3 pruebas aprobadas, 0 fallidas y 0 intermitentes; ejecución del 8 de octubre a las 23:42, hora de Bolivia. | Chromium; respuestas administrativas simuladas. No comprueba la conexión del panel con FastAPI y MySQL. |
-| Flujo de claves | `web/e2e/admin.spec.ts` verifica entrar, crear, revelar y ocultar el secreto, cerrar el diálogo y revocar. | No verifica el portapapeles ni el uso posterior de esa clave contra `/v1/chat/completions`. |
-| Accesibilidad | axe-core se ejecuta sobre acceso y guía de conexión. | No incluye todos los diálogos, lista con datos, mensajes de error o revisión con lector de pantalla. |
-| Móvil | Una prueba comprueba ausencia de desbordamiento del acceso a 390 × 844. | No cubre panel autenticado, tablet, orientación horizontal o anchos de 320 px. |
-| Backend | La última ejecución registrada en la conversación aprobó 16 pruebas pytest. Las rutas administrativas usan SQLite aislado. | Esta cifra no es un informe de cobertura. SQLite no verifica transacciones y operaciones específicas de MySQL. |
-| Compilación | La última compilación de React y TypeScript fue correcta. | Compilar no valida comportamiento, accesibilidad ni despliegue. |
-| Operación | En la sesión anterior no se pudo acceder al motor de Docker. | Falta ejecutar integración con MySQL, migraciones y la imagen final. Revisar disponibilidad al comenzar la etapa 0. |
+| Navegador | El último informe `test-results/frontend-test-report.json` registra 7 pruebas aprobadas y 0 fallidas en Chromium. Incluye UI con stubs y llamadas reales a FastAPI. | Backend aislado en SQLite en memoria; no comprueba MySQL ni una imagen desplegada. |
+| Flujo de claves | La suite verifica acceso, creación, mostrar/ocultar, respuesta de una sola vez, listado, secreto oculto, revocación y rechazo de la clave revocada. | No comprueba portapapeles del sistema ni una llamada de chat a un proveedor externo. |
+| Accesibilidad | axe-core verifica acceso, panel, guía y diálogo de creación; Playwright verifica el ciclo de foco, Escape y retorno del foco. | No incluye lector de pantalla, todos los estados de error ni pruebas manuales WCAG. |
+| Móvil y escritorio | El panel autenticado no desborda a 320, 360, 390, 768, 1024 y 1440 px; el cierre de sesión permanece visible en móvil. | No incluye rotación, contenido largo, todos los recorridos en cada ancho ni dispositivos físicos. |
+| Backend | 17 pruebas pytest aprobadas. Dos pruebas Playwright adicionales ejercitan FastAPI por HTTP y SQLite independiente con claves de prueba. | SQLite no verifica transacciones, migraciones ni operaciones específicas de MySQL. |
+| Compilación y estilo | `npm run build` y `ruff check app tests` completaron correctamente. | La compilación no valida despliegue ni proveedores externos. |
+| Operación | El motor Docker no está accesible en este equipo; la suite HTTP local funciona con una base SQLite temporal en memoria. | Sigue pendiente MySQL, migraciones de la imagen final y verificación con proveedor real. |
 
-Estas evidencias corresponden a ejecuciones anteriores. La elaboración de este documento no ejecuta nuevamente las suites ni certifica los 100 escenarios. El catálogo de la sección 4 comienza pendiente en la suite integral de Playwright; las pruebas actuales se reutilizarán donde correspondan.
+La última ejecución Playwright se realizó el 9 de octubre de 2026 y aprobó 7/7 pruebas. La última ejecución pytest aprobó 17 pruebas. Son avances parciales: el catálogo T001–T100 continúa sin certificación global y se debe registrar cada caso conforme se implemente.
+
+**Implementado en esta iteración:** API `/console-config` para ofrecer la URL pública configurable mediante `API_PUBLIC_BASE_URL`; estados del panel basados en `/ready`; límites de claves alineados entre React y FastAPI (1–10.000 solicitudes/minuto, nombre y propietario hasta 120 caracteres); salida de sesión que limpia datos sensibles; diálogos accesibles con foco atrapado, Escape y retorno de foco; comprobaciones axe sobre acceso, panel, guía y diálogo; adaptación sin desbordamiento entre 320 y 1440 px; flujo real de navegador y API en una base SQLite en memoria; integración de Playwright en CI.
 
 **Límites funcionales actuales:** `stream: true` responde 501. El enrutador selecciona adaptadores `openai` y `google`; otros adaptadores requieren implementación y verificación antes de anunciarse como disponibles. Proveedores y modelos tienen rutas administrativas, pero la consola actual presenta claves y guía de conexión. La configuración contempla proveedores sin credencial cuando su implementación lo permite; las pruebas no deben exigir una clave externa para todos los proveedores.
 
@@ -30,9 +32,9 @@ Se necesitan cuatro grupos con propósito explícito:
 
 | Grupo | Sistema utilizado | Qué demuestra |
 |---|---|---|
-| API | `request.get/post/patch/put/delete` contra FastAPI real y MySQL exclusivo de pruebas. | Contratos HTTP, autorización, persistencia y comportamiento del enrutador. |
+| API | `request.get/post/patch/put/delete` contra FastAPI real y base aislada. La suite local usa SQLite en memoria; la etapa MySQL debe añadirse al entorno de integración. | Contratos HTTP, autorización, ciclo de claves y acceso con clave revocada. La persistencia MySQL permanece pendiente. |
 | Interfaz aislada | Navegador y `page.route` para escenarios controlados de demora y error. | Estados del panel, validación, interacción y presentación. |
-| Integración completa | Navegador, FastAPI, MySQL y servidor que simula proveedores externos. | El flujo real de aplicación; no interceptar las rutas de Relevo en este grupo. |
+| Integración completa | Navegador, FastAPI y SQLite en memoria en la suite local; MySQL y proveedor simulado quedan para el entorno dedicado. | El flujo real de acceso, creación y revocación sin interceptar las rutas de Relevo. |
 | Verificación de despliegue | Aplicación publicada en un entorno de prueba y proveedor gratuito disponible, cuando esté configurado. | Conectividad real y configuración final; ejecutar bajo demanda con límites pequeños. |
 
 La simulación de proveedores debe ser un servidor HTTP al que llama el adaptador real de Relevo. Debe poder devolver éxito, 429, 5xx, retrasos y respuestas inválidas. Así se prueba la integración del backend sin depender de cuotas, cuentas externas o cambios de catálogo.
@@ -271,12 +273,12 @@ Los intervalos representan la secuencia de entrega. Se cierra una etapa cuando e
 
 | Etapa | Avance | Trabajo y entregable | Responsable principal | Condición para cerrar | Estimación |
 |---|---|---|---|---|---|
-| E0 | 0–10 | Entorno MySQL aislado, fixtures, proveedor simulado y configuración Playwright por grupo. | Backend y verificación | Un API test y un recorrido real ejecutables con datos limpios. | 1–2 días |
-| E1 | 10–25 | Autenticación y ciclo de claves; casos T001–T025. | Backend | P0 de acceso y claves aprobados; secretos ausentes en listas y registros. | 3–4 días |
+| E0 | 0–10 | Fixtures y configuración Playwright; servidor API local con SQLite en memoria. | Backend y verificación | API tests y un recorrido real ejecutables con datos limpios. **Parcial:** MySQL y proveedor simulado pendientes. | 1–2 días |
+| E1 | 10–25 | Autenticación y ciclo de claves; casos T001–T025. | Backend | P0 de acceso y claves aprobados; secretos ausentes en listas y registros. **Parcial:** login, crear/listar/revocar y protección del secreto están cubiertos; resta ampliar el catálogo. | 3–4 días |
 | E2 | 25–40 | Proveedores, modelos, fallback y cuotas; T026–T060. | Backend | Selección y cuotas verificadas en MySQL, incluida concurrencia controlada. | 3–5 días |
-| E3 | 40–60 | Sistema visual, navegación adaptable, formularios, diálogos y estados del panel. | Frontend y diseño | Flujos principales utilizables entre 320 y 1920 px; salida de sesión accesible. | 4–6 días |
-| E4 | 60–75 | Pruebas de interfaz y recorridos integrales; T061–T075 y T091–T094. | Frontend y verificación | Crear, usar y revocar desde navegador contra backend real, sin interceptar Relevo. | 3–4 días |
-| E5 | 75–85 | Accesibilidad, capturas base y tres motores; T076–T090 y T096. | Diseño y verificación | axe, teclado y matriz visual aprobados; excepciones documentadas. | 2–3 días |
+| E3 | 40–60 | Sistema visual, navegación adaptable, formularios, diálogos y estados del panel. | Frontend y diseño | Flujos principales utilizables entre 320 y 1920 px; salida de sesión accesible. **Parcial:** se verificó 320–1440 px. | 4–6 días |
+| E4 | 60–75 | Pruebas de interfaz y recorridos integrales; T061–T075 y T091–T094. | Frontend y verificación | Crear y revocar desde navegador contra backend real, sin interceptar Relevo. **Parcial:** recorrido aprobado sobre SQLite en memoria. | 3–4 días |
+| E5 | 75–85 | Accesibilidad, capturas base y tres motores; T076–T090 y T096. | Diseño y verificación | axe, teclado y matriz visual aprobados; excepciones documentadas. **Parcial:** Chromium, axe y teclado aprobados en los estados indicados. | 2–3 días |
 | E6 | 85–95 | Rendimiento, CORS, reinicios, respaldo y CI; T095, T097 y T098. | Operación y desarrollo | Imagen reproducible y evidencia de recuperación y presupuesto de rendimiento. | 2–3 días |
 | E7 | 95–100 | Verificación con proveedor real, revisión final y publicación; T099–T100. | Responsable del producto y operación | Sin P0 abiertos; informe final firmado con alcance y limitaciones reales. | 1–2 días |
 
@@ -342,7 +344,9 @@ npm run test:e2e
 npm run build
 ```
 
-**Después de implementar la organización propuesta:** separar proyectos Playwright `api`, `ui`, `integrated` y `deployment`. La verificación de despliegue y de proveedor real se ejecuta bajo demanda; las demás pueden trabajar con proveedores simulados y MySQL aislado.
+**Estado actual:** `npm run test:e2e` levanta automáticamente FastAPI en el puerto 8765 con SQLite en memoria y Vite en 5173, ejecuta stubs de UI y dos pruebas HTTP contra el servidor real. No necesita Docker ni credenciales de proveedores. La creación automática de tablas (`DATABASE_AUTO_CREATE=true`) se activa únicamente en ese proceso de prueba.
+
+**Pendiente:** separar proyectos Playwright `api`, `ui`, `integrated` y `deployment`, configurar MySQL de pruebas, añadir el servidor de proveedor simulado y cubrir T001–T100. La verificación de despliegue y de proveedor real se ejecuta bajo demanda.
 
 En cada propuesta de cambio, ejecutar pruebas unitarias, build y comprobaciones rápidas de API y Chromium. Antes de publicar, ejecutar suite de MySQL, los tres motores, accesibilidad y capturas. Conservar informe HTML/JSON y trazas de fallos sintéticos con retención definida. La configuración de CI actual ejecuta calidad de Python; añadir instalación de Node y las suites de Playwright.
 

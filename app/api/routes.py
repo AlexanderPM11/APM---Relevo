@@ -49,8 +49,8 @@ class ApiKeyCreate(BaseModel):
     """Consumer key metadata and per-minute cap."""
 
     name: str = Field(min_length=1, max_length=120)
-    owner: str | None = None
-    requests_per_minute: int = Field(default=60, gt=0)
+    owner: str | None = Field(default=None, max_length=120)
+    requests_per_minute: int = Field(default=60, gt=0, le=10000)
 
 
 class ProviderInput(BaseModel):

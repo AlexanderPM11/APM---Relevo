@@ -17,8 +17,10 @@ class Settings(BaseSettings):
     app_port: int = Field(default=8000, ge=1, le=65535)
     log_level: str = "INFO"
     cors_origins: str = ""
+    api_public_base_url: str | None = None
     tz: str = "UTC"
     database_url: str | None = None
+    database_auto_create: bool = False
     mysql_host: str = "mysql"
     mysql_port: int = 3306
     mysql_database: str = "relevo"

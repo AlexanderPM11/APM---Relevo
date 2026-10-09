@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import './styles.css'
 
@@ -7,6 +7,37 @@ type CreatedKey = { id: number; name: string; prefix: string; api_key: string }
 type Admin = { email: string }
 
 const TOKEN_SLOT = 'relevo.admin.session'
+
+function useDialogFocus(onClose: () => void, returnFocus?: HTMLElement | null) {
+  const dialogRef = useRef<HTMLElement>(null)
+  const closeRef = useRef(onClose)
+  closeRef.current = onClose
+  useEffect(() => {
+    const previous = document.activeElement as HTMLElement | null
+    const dialog = dialogRef.current
+    const focusable = () => Array.from(dialog?.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), input:not([disabled]), a[href], [tabindex="0"]',
+    ) ?? [])
+    focusable()[0]?.focus()
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') { event.preventDefault(); closeRef.current(); return }
+      if (event.key !== 'Tab') return
+      const items = focusable()
+      if (!items.length) return
+      if (event.shiftKey && document.activeElement === items[0]) {
+        event.preventDefault(); items.at(-1)?.focus()
+      } else if (!event.shiftKey && document.activeElement === items.at(-1)) {
+        event.preventDefault(); items[0]?.focus()
+      }
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('keydown', onKeyDown)
+      window.setTimeout(() => (returnFocus ?? previous)?.focus(), 0)
+    }
+  }, [])
+  return dialogRef
+}
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const token = sessionStorage.getItem(TOKEN_SLOT)
@@ -62,6 +93,24 @@ function App() {
   const [search, setSearch] = useState('')
   const [tab, setTab] = useState<'keys' | 'connect'>('keys')
   const [copied, setCopied] = useState('')
+  const [apiBase, setApiBase] = useState(window.location.origin)
+  const [apiReady, setApiReady] = useState<boolean | null>(null)
+  const dialogReturnFocus = useRef<HTMLElement | null>(null)
+
+  function openCreateDialog() {
+    dialogReturnFocus.current = document.activeElement as HTMLElement
+    setCreateOpen(true)
+  }
+
+  useEffect(() => {
+    void fetch('/console-config').then(async (response) => {
+      if (response.ok) {
+        const config = await response.json() as { api_base_url?: string }
+        if (config.api_base_url) setApiBase(config.api_base_url.replace(/\/$/, ''))
+      }
+    }).catch(() => undefined)
+    void fetch('/ready').then((response) => setApiReady(response.ok)).catch(() => setApiReady(false))
+  }, [])
 
   const loadKeys = async () => {
     setLoading(true)
@@ -94,7 +143,11 @@ function App() {
     } catch (e) { setError(e instanceof Error ? e.message : 'No se pudo iniciar sesión.') }
   }
 
-  function signOut() { sessionStorage.removeItem(TOKEN_SLOT); setToken(null); setAdmin(null); setKeys([]); setTab('keys') }
+  function signOut() {
+    sessionStorage.removeItem(TOKEN_SLOT)
+    setToken(null); setAdmin(null); setKeys([]); setTab('keys'); setNewKey(null)
+    setCreateOpen(false); setConfirmRevoke(null); setSearch(''); setError(''); setNotice('')
+  }
 
   async function createKey(values: { name: string; owner: string; requests_per_minute: number }) {
     try {
@@ -115,41 +168,44 @@ function App() {
 
   if (!token) return <Login onSubmit={signIn} error={error} />
 
-  return <div className="app-shell">
+  return <>
+    <div className="app-shell" inert={Boolean(createOpen || newKey || confirmRevoke)} aria-hidden={Boolean(createOpen || newKey || confirmRevoke)}>
     <aside className="sidebar" aria-label="Navegación principal">
       <a className="brand" href="#inicio" aria-label="Relevo, inicio"><span className="brand-mark">r</span><span>relevo<span className="brand-period">.</span></span></a>
       <div className="side-label">PLATAFORMA</div>
       <button className={`nav-item ${tab === 'keys' ? 'active' : ''}`} onClick={() => setTab('keys')}><Icon name="key"/><span>Claves API</span><span className="nav-count">{activeCount}</span></button>
       <button className={`nav-item ${tab === 'connect' ? 'active' : ''}`} onClick={() => setTab('connect')}><Icon name="code"/><span>Conectar una app</span></button>
+      <button className="mobile-logout icon-button subtle" title="Cerrar sesión" aria-label="Cerrar sesión" onClick={signOut}><Icon name="logout" size={17}/></button>
       <div className="sidebar-bottom">
-        <div className="status-card"><span className="status-pulse"/><div><strong>API operativa</strong><small>Conexiones habilitadas</small></div></div>
+        <div className="status-card"><span className={`status-pulse ${apiReady === false ? 'status-down' : ''}`}/><div><strong>{apiReady === null ? 'Comprobando servicio' : apiReady ? 'Servicio listo' : 'Servicio no listo'}</strong><small>{apiReady ? 'Modelos listos para usar' : 'Revisa conexión y modelos'}</small></div></div>
         <div className="profile"><div className="avatar">{(admin?.email ?? 'A').charAt(0).toUpperCase()}</div><div className="profile-copy"><strong>{admin?.email ?? 'Administrador'}</strong><small>Espacio de trabajo</small></div><button className="icon-button subtle" title="Cerrar sesión" onClick={signOut}><Icon name="logout" size={17}/></button></div>
       </div>
     </aside>
 
     <main className="main-area">
-      <header className="topbar"><div className="breadcrumb"><span>Relevo</span><span className="crumb-slash">/</span><strong>{tab === 'keys' ? 'Claves API' : 'Conectar una app'}</strong></div><div className="topbar-right"><span className="live-dot"/>Todos los sistemas en línea <span className="topbar-divider"/><span className="environment">PRODUCCIÓN</span></div></header>
+      <header className="topbar"><div className="breadcrumb"><span>Relevo</span><span className="crumb-slash">/</span><strong>{tab === 'keys' ? 'Claves API' : 'Conectar una app'}</strong></div><div className="topbar-right"><span className={`live-dot ${apiReady === false ? 'status-down' : ''}`}/>{apiReady === null ? 'Comprobando servicio' : apiReady ? 'Servicio listo' : 'Servicio no listo'}</div></header>
       {error && <div className="toast error-toast" role="alert"><span>{error}</span><button onClick={() => setError('')}><Icon name="close" size={16}/></button></div>}
       {notice && <div className="toast success-toast" role="status"><Icon name="check" size={16}/><span>{notice}</span><button onClick={() => setNotice('')}><Icon name="close" size={16}/></button></div>}
       <div className="content-wrap">
         {tab === 'keys' ? <>
           <section className="page-heading"><div><div className="eyebrow"><span className="eyebrow-line"/>GESTIÓN DE ACCESO</div><h1>Tus claves,<br/><em>bajo control.</em></h1><p className="intro">Crea accesos seguros para cada aplicación. Tú decides quién entra y cuándo.</p></div><div className="heading-orbit" aria-hidden="true"><div className="orbit-ring ring-one"/><div className="orbit-ring ring-two"/><div className="orbit-center"><Icon name="key" size={24}/></div><span className="orbit-spark spark-a"/><span className="orbit-spark spark-b"/></div></section>
           <section className="overview-row"><div className="stat-card"><span className="stat-icon green"><Icon name="key"/></span><div className="stat-value">{keys.length.toString().padStart(2, '0')}</div><div className="stat-caption">Claves creadas</div></div><div className="stat-card"><span className="stat-icon lime"><span className="tiny-pulse"/></span><div className="stat-value">{activeCount.toString().padStart(2, '0')}</div><div className="stat-caption">Accesos activos</div></div><div className="stat-card stat-note"><div className="note-top"><Icon name="shield" size={16}/><span>PROTEGIDAS POR DISEÑO</span></div><p>El secreto completo se muestra una sola vez al crear la clave.</p><button onClick={() => setTab('connect')}>Cómo conectarse <Icon name="arrow" size={15}/></button></div></section>
-          <section className="keys-section"><div className="section-head"><div><div className="section-kicker">ACCESOS DEL ESPACIO</div><h2>Claves API <span className="count-pill">{keys.length}</span></h2></div><button className="primary-button" onClick={() => setCreateOpen(true)}><Icon name="plus" size={17}/> Nueva clave</button></div>
+          <section className="keys-section"><div className="section-head"><div><div className="section-kicker">ACCESOS DEL ESPACIO</div><h2>Claves API <span className="count-pill">{keys.length}</span></h2></div><button className="primary-button" onClick={openCreateDialog}><Icon name="plus" size={17}/> Nueva clave</button></div>
             <div className="key-toolbar"><div className="search-box"><span className="search-glyph">⌕</span><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar por nombre o propietario…" aria-label="Buscar claves"/></div><button className="icon-button refresh-button" onClick={() => void loadKeys()} title="Actualizar" disabled={loading}><Icon name="refresh" size={17}/></button></div>
             <div className="key-list">
-              {loading && keys.length === 0 ? <div className="empty-state"><span className="spinner"/><p>Cargando accesos…</p></div> : filteredKeys.length === 0 ? <div className="empty-state"><span className="empty-key"><Icon name="key" size={24}/></span><h3>{search ? 'No encontramos coincidencias' : 'Todavía no hay claves'}</h3><p>{search ? 'Prueba con otro nombre o propietario.' : 'Crea una clave para conectar tu primera aplicación.'}</p>{!search && <button className="text-action" onClick={() => setCreateOpen(true)}>Crear primera clave <Icon name="arrow" size={15}/></button>}</div> : filteredKeys.map((key, index) => <article className="key-row" key={key.id} style={{ animationDelay: `${index * 45}ms` }}><div className="key-glyph"><Icon name="key" size={18}/></div><div className="key-primary"><strong>{key.name}</strong><span>{key.owner || 'Sin propietario asignado'}</span></div><code className="key-prefix">rlv_{key.prefix}••••••••</code><div className="limit-chip">{key.requests_per_minute}<span>/ min</span></div><div className={`key-state ${key.is_active ? 'is-active' : 'is-revoked'}`}><i/>{key.is_active ? 'Activa' : 'Revocada'}</div>{key.is_active ? <button className="revoke-button" title={`Revocar ${key.name}`} onClick={() => setConfirmRevoke(key)}><Icon name="trash" size={16}/><span>Revocar</span></button> : <span className="revoked-label">Sin acceso</span>}</article>)}
+              {loading && keys.length === 0 ? <div className="empty-state"><span className="spinner"/><p>Cargando accesos…</p></div> : filteredKeys.length === 0 ? <div className="empty-state"><span className="empty-key"><Icon name="key" size={24}/></span><h3>{search ? 'No encontramos coincidencias' : 'Todavía no hay claves'}</h3><p>{search ? 'Prueba con otro nombre o propietario.' : 'Crea una clave para conectar tu primera aplicación.'}</p>{!search && <button className="text-action" onClick={openCreateDialog}>Crear primera clave <Icon name="arrow" size={15}/></button>}</div> : filteredKeys.map((key, index) => <article className="key-row" key={key.id} style={{ animationDelay: `${index * 45}ms` }}><div className="key-glyph"><Icon name="key" size={18}/></div><div className="key-primary"><strong>{key.name}</strong><span>{key.owner || 'Sin propietario asignado'}</span></div><code className="key-prefix">rlv_{key.prefix}••••••••</code><div className="limit-chip">{key.requests_per_minute}<span>/ min</span></div><div className={`key-state ${key.is_active ? 'is-active' : 'is-revoked'}`}><i/>{key.is_active ? 'Activa' : 'Revocada'}</div>{key.is_active ? <button className="revoke-button" title={`Revocar ${key.name}`} onClick={(event) => { dialogReturnFocus.current = event.currentTarget; setConfirmRevoke(key) }}><Icon name="trash" size={16}/><span>Revocar</span></button> : <span className="revoked-label">Sin acceso</span>}</article>)}
             </div>
-            <div className="list-foot"><span>Los secretos nunca se guardan en texto legible.</span><span><span className="tiny-pulse"/> Cifrado de extremo a extremo</span></div>
+            <div className="list-foot"><span>El secreto completo solo se muestra al crear la clave.</span><span><span className="tiny-pulse"/> Secreto visible una sola vez</span></div>
           </section>
-        </> : <ConnectGuide onCopy={copy} copied={copied} />}
+        </> : <ConnectGuide onCopy={copy} copied={copied} apiBase={apiBase} />}
         <footer className="page-footer"><span>RELEVO <b>·</b> ACCESO A MODELOS, EN UN SOLO LUGAR</span><a href="/openapi.json" target="_blank" rel="noreferrer">Referencia de API <Icon name="external" size={13}/></a></footer>
       </div>
     </main>
-    {createOpen && <CreateDialog onClose={() => setCreateOpen(false)} onSubmit={createKey}/>}
-    {newKey && <SecretDialog value={newKey.api_key} name={newKey.name} onClose={() => setNewKey(null)} onCopy={() => void copy(newKey.api_key, 'secret')} copied={copied === 'secret'} />}
-    {confirmRevoke && <ConfirmDialog keyInfo={confirmRevoke} onClose={() => setConfirmRevoke(null)} onConfirm={() => void revokeKey(confirmRevoke)}/>}
-  </div>
+    </div>
+    {createOpen && <CreateDialog onClose={() => setCreateOpen(false)} onSubmit={createKey} returnFocus={dialogReturnFocus.current}/>}
+    {newKey && <SecretDialog value={newKey.api_key} name={newKey.name} onClose={() => setNewKey(null)} onCopy={() => void copy(newKey.api_key, 'secret')} copied={copied === 'secret'} returnFocus={dialogReturnFocus.current} />}
+    {confirmRevoke && <ConfirmDialog keyInfo={confirmRevoke} onClose={() => setConfirmRevoke(null)} onConfirm={() => void revokeKey(confirmRevoke)} returnFocus={dialogReturnFocus.current}/>}
+  </>
 }
 
 function Login({ onSubmit, error }: { onSubmit: (email: string, password: string) => void; error: string }) {
@@ -159,26 +215,29 @@ function Login({ onSubmit, error }: { onSubmit: (email: string, password: string
   return <div className="login-screen"><aside className="login-art" aria-label="Información de Relevo"><div className="art-grid"/><div className="login-art-content"><a className="brand light-brand" href="#inicio"><span className="brand-mark">r</span><span>relevo<span className="brand-period">.</span></span></a><div className="art-copy"><div className="eyebrow light-eyebrow"><span className="eyebrow-line"/>UNA SOLA PUERTA. MUCHOS MODELOS.</div><h1>Tu IA.<br/><em>Tu manera.</em></h1><p>Un acceso simple para conectar tus herramientas con los modelos que mueven tus ideas.</p></div><div className="art-bottom"><div className="art-stat"><strong>01</strong><span>API key<br/>por aplicación</span></div><div className="art-stat"><strong>∞</strong><span>Modelos<br/>a tu alcance</span></div><div className="art-star">✳</div></div></div><div className="login-decoration"><div className="decor-line d1"/><div className="decor-line d2"/><div className="decor-circle"/><span className="decor-cross">✳</span></div></aside><main className="login-panel"><div className="login-form-wrap"><div className="login-kicker">PANEL ADMINISTRATIVO</div><h2>Qué bueno<br/>verte de nuevo.</h2><p className="login-lede">Inicia sesión para administrar las conexiones de tu espacio.</p>{error && <div className="form-error" role="alert">{error}</div>}<form onSubmit={(e) => { e.preventDefault(); onSubmit(email, password) }}><label>Correo de administrador<input type="email" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="tu@empresa.com" required/></label><label>Contraseña<div className="password-wrap"><input type={show ? 'text' : 'password'} autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Tu contraseña" required/><button type="button" onClick={() => setShow(!show)}>{show ? 'Ocultar' : 'Mostrar'}</button></div></label><button className="primary-button login-submit" type="submit">Entrar al panel <Icon name="arrow" size={17}/></button></form><div className="login-hint"><Icon name="shield" size={16}/><span>Solo administradores pueden gestionar claves.</span></div></div><div className="login-foot">© {new Date().getFullYear()} RELEVO <span>·</span> HECHO PARA CONECTAR</div></main></div>
 }
 
-function CreateDialog({ onClose, onSubmit }: { onClose: () => void; onSubmit: (values: { name: string; owner: string; requests_per_minute: number }) => void }) {
+function CreateDialog({ onClose, onSubmit, returnFocus }: { onClose: () => void; onSubmit: (values: { name: string; owner: string; requests_per_minute: number }) => void; returnFocus: HTMLElement | null }) {
+  const dialogRef = useDialogFocus(onClose, returnFocus)
   const [name, setName] = useState('')
   const [owner, setOwner] = useState('')
   const [limit, setLimit] = useState('60')
   const [saving, setSaving] = useState(false)
-  return <div className="modal-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}><section className="modal create-modal" role="dialog" aria-modal="true" aria-labelledby="create-title"><button className="modal-close" onClick={onClose} aria-label="Cerrar"><Icon name="close"/></button><div className="modal-icon"><Icon name="key" size={21}/></div><div className="modal-kicker">NUEVO ACCESO</div><h2 id="create-title">Una clave por aplicación.</h2><p className="modal-description">Así podrás identificarla y revocarla por separado cuando lo necesites.</p><form onSubmit={async (e) => { e.preventDefault(); setSaving(true); await onSubmit({ name: name.trim(), owner: owner.trim(), requests_per_minute: Number(limit) }); setSaving(false) }}><label>Nombre de la aplicación<input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="p. ej. App móvil" maxLength={80} required/></label><label>Propietario <span className="optional">OPCIONAL</span><input value={owner} onChange={(e) => setOwner(e.target.value)} placeholder="p. ej. equipo de producto" maxLength={120}/></label><label>Límite de solicitudes por minuto<div className="input-suffix"><input type="number" min="1" max="10000" value={limit} onChange={(e) => setLimit(e.target.value)} required/><span>solicitudes / min</span></div></label><div className="modal-actions"><button type="button" className="secondary-button" onClick={onClose}>Cancelar</button><button type="submit" className="primary-button" disabled={saving || !name.trim()}>{saving ? 'Creando…' : 'Crear clave'} <Icon name="arrow" size={16}/></button></div></form></section></div>
+  return <div className="modal-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}><section ref={dialogRef} className="modal create-modal" role="dialog" aria-modal="true" aria-labelledby="create-title"><button className="modal-close" onClick={onClose} aria-label="Cerrar"><Icon name="close"/></button><div className="modal-icon"><Icon name="key" size={21}/></div><div className="modal-kicker">NUEVO ACCESO</div><h2 id="create-title">Una clave por aplicación.</h2><p className="modal-description">Así podrás identificarla y revocarla por separado cuando lo necesites.</p><form onSubmit={async (e) => { e.preventDefault(); setSaving(true); await onSubmit({ name: name.trim(), owner: owner.trim(), requests_per_minute: Number(limit) }); setSaving(false) }}><label>Nombre de la aplicación<input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="p. ej. App móvil" maxLength={120} required/></label><label>Propietario <span className="optional">OPCIONAL</span><input value={owner} onChange={(e) => setOwner(e.target.value)} placeholder="p. ej. equipo de producto" maxLength={120}/></label><label>Límite de solicitudes por minuto<div className="input-suffix"><input type="number" min="1" max="10000" value={limit} onChange={(e) => setLimit(e.target.value)} required/><span>solicitudes / min</span></div></label><div className="modal-actions"><button type="button" className="secondary-button" onClick={onClose}>Cancelar</button><button type="submit" className="primary-button" disabled={saving || !name.trim()}>{saving ? 'Creando…' : 'Crear clave'} <Icon name="arrow" size={16}/></button></div></form></section></div>
 }
 
-function SecretDialog({ value, name, onClose, onCopy, copied }: { value: string; name: string; onClose: () => void; onCopy: () => void; copied: boolean }) {
+function SecretDialog({ value, name, onClose, onCopy, copied, returnFocus }: { value: string; name: string; onClose: () => void; onCopy: () => void; copied: boolean; returnFocus: HTMLElement | null }) {
+  const dialogRef = useDialogFocus(onClose, returnFocus)
   const [revealed, setRevealed] = useState(false)
-  return <div className="modal-backdrop"><section className="modal secret-modal" role="dialog" aria-modal="true" aria-labelledby="secret-title"><div className="secret-success"><span className="success-burst">✳</span><span>CLAVE CREADA</span></div><h2 id="secret-title">Guárdala ahora.</h2><p className="modal-description">La clave de <strong>{name}</strong> solo se muestra esta vez. Cópiala y guárdala en un lugar seguro.</p><div className="secret-box"><code>{revealed ? value : `${value.slice(0, 9)}${'•'.repeat(Math.max(0, value.length - 9))}`}</code><button onClick={() => setRevealed(!revealed)}>{revealed ? 'Ocultar' : 'Mostrar'}</button></div><button className="primary-button copy-secret" onClick={onCopy}><Icon name={copied ? 'check' : 'copy'} size={17}/>{copied ? 'Copiada' : 'Copiar clave'}</button><div className="secret-warning"><Icon name="shield" size={16}/><span>Si la pierdes, crea otra clave y revoca esta.</span></div><button className="done-button" onClick={onClose}>Ya la guardé <Icon name="arrow" size={15}/></button></section></div>
+  return <div className="modal-backdrop"><section ref={dialogRef} className="modal secret-modal" role="dialog" aria-modal="true" aria-labelledby="secret-title"><div className="secret-success"><span className="success-burst">✳</span><span>CLAVE CREADA</span></div><h2 id="secret-title">Guárdala ahora.</h2><p className="modal-description">La clave de <strong>{name}</strong> solo se muestra esta vez. Cópiala y guárdala en un lugar seguro.</p><div className="secret-box"><code>{revealed ? value : `${value.slice(0, 9)}${'•'.repeat(Math.max(0, value.length - 9))}`}</code><button onClick={() => setRevealed(!revealed)}>{revealed ? 'Ocultar' : 'Mostrar'}</button></div><button className="primary-button copy-secret" onClick={onCopy}><Icon name={copied ? 'check' : 'copy'} size={17}/>{copied ? 'Copiada' : 'Copiar clave'}</button><div className="secret-warning"><Icon name="shield" size={16}/><span>Si la pierdes, crea otra clave y revoca esta.</span></div><button className="done-button" onClick={onClose}>Ya la guardé <Icon name="arrow" size={15}/></button></section></div>
 }
 
-function ConfirmDialog({ keyInfo, onClose, onConfirm }: { keyInfo: ApiKey; onClose: () => void; onConfirm: () => void }) {
-  return <div className="modal-backdrop"><section className="modal confirm-modal" role="dialog" aria-modal="true" aria-labelledby="revoke-title"><div className="revoke-mark"><Icon name="trash" size={20}/></div><h2 id="revoke-title">¿Revocar esta clave?</h2><p className="modal-description"><strong>{keyInfo.name}</strong> perderá acceso a Relevo de inmediato. Las aplicaciones que la usan dejarán de conectar.</p><div className="modal-actions"><button className="secondary-button" onClick={onClose}>Conservar clave</button><button className="danger-button" onClick={onConfirm}>Revocar acceso</button></div></section></div>
+function ConfirmDialog({ keyInfo, onClose, onConfirm, returnFocus }: { keyInfo: ApiKey; onClose: () => void; onConfirm: () => void; returnFocus: HTMLElement | null }) {
+  const dialogRef = useDialogFocus(onClose, returnFocus)
+  return <div className="modal-backdrop"><section ref={dialogRef} className="modal confirm-modal" role="dialog" aria-modal="true" aria-labelledby="revoke-title"><div className="revoke-mark"><Icon name="trash" size={20}/></div><h2 id="revoke-title">¿Revocar esta clave?</h2><p className="modal-description"><strong>{keyInfo.name}</strong> perderá acceso a Relevo de inmediato. Las aplicaciones que la usan dejarán de conectar.</p><div className="modal-actions"><button className="secondary-button" onClick={onClose}>Conservar clave</button><button className="danger-button" onClick={onConfirm}>Revocar acceso</button></div></section></div>
 }
 
-function ConnectGuide({ onCopy, copied }: { onCopy: (text: string, label: string) => void; copied: string }) {
+function ConnectGuide({ onCopy, copied, apiBase }: { onCopy: (text: string, label: string) => void; copied: string; apiBase: string }) {
   const [language, setLanguage] = useState<'curl' | 'javascript' | 'python'>('curl')
-  const endpoint = `${window.location.port === '5173' ? 'http://localhost:8000' : window.location.origin}/v1`
+  const endpoint = `${apiBase}/v1`
   const samples = {
     curl: `curl ${endpoint}/chat/completions -H 'Authorization: Bearer <RELEVO_API_KEY>' -H 'Content-Type: application/json' -d '{"model":"auto","messages":[{"role":"user","content":"Hola"}]}'`,
     javascript: [
