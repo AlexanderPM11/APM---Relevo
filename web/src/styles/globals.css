@@ -1,0 +1,10 @@
+@import './tokens.css';
+
+*,*::before,*::after{box-sizing:border-box}
+html{min-width:320px;min-height:100%;font-family:var(--font-ui);font-size:14px;line-height:22px;color:var(--text-primary);background:var(--bg-canvas);text-size-adjust:100%}
+body{min-width:320px;min-height:100vh;margin:0}
+button,input,textarea,select{font:inherit}
+button{color:inherit}
+button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible{outline:2px solid var(--focus-ring);outline-offset:2px}
+::selection{color:var(--text-inverse);background:var(--c-accent-600)}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}

@@ -35,3 +35,4 @@ Thumbs.db
 *.log
 mysql-data/
 docker-compose.yml
+docker-compose.yml

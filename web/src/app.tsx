@@ -1,6 +1,7 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { createRoot } from 'react-dom/client'
+import { useLocation, useNavigate } from 'react-router-dom'
 import './styles.css'
+import './styles/globals.css'
 
 type ApiKey = { id: number; name: string; prefix: string; owner: string | null; is_active: boolean; requests_per_minute: number }
 type CreatedKey = { id: number; name: string; prefix: string; api_key: string }
@@ -93,7 +94,9 @@ function Icon({ name, size = 18 }: { name: 'key' | 'copy' | 'plus' | 'logout' | 
   return <svg {...common}>{paths[name]}</svg>
 }
 
-function App() {
+export function App() {
+  const location = useLocation()
+  const navigate = useNavigate()
   const [token, setToken] = useState(() => sessionStorage.getItem(TOKEN_SLOT))
   const [admin, setAdmin] = useState<Admin | null>(null)
   const [keys, setKeys] = useState<ApiKey[]>([])
@@ -104,7 +107,7 @@ function App() {
   const [createOpen, setCreateOpen] = useState(false)
   const [confirmRevoke, setConfirmRevoke] = useState<ApiKey | null>(null)
   const [search, setSearch] = useState('')
-  const [tab, setTab] = useState<'keys' | 'connect' | 'examples'>('keys')
+  const [tab, setTab] = useState<'keys' | 'connect' | 'examples'>(() => location.pathname.startsWith('/connect') ? 'connect' : location.pathname.startsWith('/playground') ? 'examples' : 'keys')
   const [playgroundCatalog, setPlaygroundCatalog] = useState<PlaygroundCatalog>({ api_keys: [], models: [] })
   const [copied, setCopied] = useState('')
   const [apiBase, setApiBase] = useState(window.location.origin)
@@ -121,6 +124,12 @@ function App() {
       dialogReturnFocus.current.focus({ preventScroll: true })
     }
   }, [createOpen])
+
+  useEffect(() => {
+    const nextTab = location.pathname.startsWith('/connect') ? 'connect' : location.pathname.startsWith('/playground') ? 'examples' : 'keys'
+    setTab(nextTab)
+    document.title = `${nextTab === 'keys' ? 'Claves API' : nextTab === 'connect' ? 'Conectar una app' : 'Playground'} · Relevo`
+  }, [location.pathname])
 
   useEffect(() => {
     void fetch('/console-config').then(async (response) => {
@@ -170,6 +179,7 @@ function App() {
       sessionStorage.setItem(TOKEN_SLOT, result.access_token)
       setToken(result.access_token)
       setAdmin({ email })
+      navigate('/keys', { replace: true })
     } catch (e) { setError(e instanceof Error ? e.message : 'No se pudo iniciar sesión.') }
   }
 
@@ -203,9 +213,9 @@ function App() {
     <aside className="sidebar" aria-label="Navegación principal">
       <a className="brand" href="#inicio" aria-label="Relevo, inicio"><span className="brand-mark">r</span><span>relevo<span className="brand-period">.</span></span></a>
       <div className="side-label">PLATAFORMA</div>
-      <button className={`nav-item ${tab === 'keys' ? 'active' : ''}`} onClick={() => setTab('keys')}><Icon name="key"/><span>Claves API</span><span className="nav-count">{activeCount}</span></button>
-      <button className={`nav-item ${tab === 'connect' ? 'active' : ''}`} onClick={() => setTab('connect')}><Icon name="code"/><span>Conectar una app</span></button>
-      <button className={`nav-item ${tab === 'examples' ? 'active' : ''}`} onClick={() => setTab('examples')}><Icon name="code"/><span>Ejemplos API</span></button>
+      <button className={`nav-item ${tab === 'keys' ? 'active' : ''}`} onClick={() => navigate('/keys')}><Icon name="key"/><span>Claves API</span><span className="nav-count">{activeCount}</span></button>
+      <button className={`nav-item ${tab === 'connect' ? 'active' : ''}`} onClick={() => navigate('/connect')}><Icon name="code"/><span>Conectar una app</span></button>
+      <button className={`nav-item ${tab === 'examples' ? 'active' : ''}`} onClick={() => navigate('/playground')}><Icon name="code"/><span>Ejemplos API</span></button>
       <button className="mobile-logout icon-button subtle" title="Cerrar sesión" aria-label="Cerrar sesión" onClick={signOut}><Icon name="logout" size={17}/></button>
       <div className="sidebar-bottom">
         <div className="status-card"><span className={`status-pulse ${apiReady === false ? 'status-down' : ''}`}/><div><strong>{apiReady === null ? 'Comprobando servicio' : apiReady ? 'Servicio listo' : 'Servicio no listo'}</strong><small>{apiReady ? 'Modelos listos para usar' : 'Revisa conexión y modelos'}</small></div></div>
