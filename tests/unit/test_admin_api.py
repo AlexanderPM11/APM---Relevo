@@ -131,6 +131,36 @@ async def test_api_key_rate_limit_must_be_positive(api_client: AsyncClient) -> N
 
 
 @pytest.mark.asyncio
+async def test_playground_catalog_requires_admin_and_only_returns_safe_key_metadata(
+    api_client: AsyncClient,
+) -> None:
+    assert (await api_client.get("/admin/playground/catalog")).status_code == 401
+
+    token = await admin_token(api_client)
+    headers = {"Authorization": f"Bearer {token}"}
+    created = await api_client.post(
+        "/admin/api-keys", headers=headers, json={"name": "Ejemplo", "owner": "Docs"}
+    )
+    assert created.status_code == 201
+
+    response = await api_client.get("/admin/playground/catalog", headers=headers)
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["api_keys"] == [
+        {
+            "id": created.json()["id"],
+            "name": "Ejemplo",
+            "prefix": created.json()["prefix"],
+            "owner": "Docs",
+            "requests_per_minute": 60,
+        }
+    ]
+    assert payload["models"] == []
+    assert created.json()["api_key"] not in response.text
+
+
+@pytest.mark.asyncio
 async def test_api_key_limits_match_the_admin_console(api_client: AsyncClient) -> None:
     token = await admin_token(api_client)
     headers = {"Authorization": f"Bearer {token}"}

@@ -8,9 +8,9 @@ The complete verification and responsive interface roadmap is in [Relevo tests a
 
 ## Development
 
-Use Python 3.12 and Docker Compose. Copy `.env.example` to `.env`, replace the local passwords and security secrets, and set `ADMIN_EMAIL` and `ADMIN_PASSWORD` for the initial administrator. Then start the stack with `docker compose up --build`. The API listens on port 8000 and the administrative console is available at `http://localhost:8000/console/`. `/health` reports process liveness; `/docs` is available in development.
+Use Docker Compose. Copy `.env.example` to `.env`, replace the passwords and security secrets, and set `ADMIN_EMAIL` and `ADMIN_PASSWORD` for the initial administrator. Then start the stack with `docker compose up --build`. The `web` service serves the React console on port 80 and proxies API requests to `app` over the private Compose network. For local browser access, temporarily add `ports: ["8080:80"]` to the `web` service and visit `http://localhost:8080`. In Dokploy, route your domain (for example, `relevo.polanco.com`) to the `web` service on port 80. The backend and MySQL have no host-published ports. `/health` reports backend liveness; `/docs` is available in development.
 
-For front-end development, start the API on port 8000, then run `npm ci` and `npm run dev` from `web/`. Open `http://localhost:5173/console/`; Vite proxies API requests to the local server. In the production Docker image, the React build is served by FastAPI on the same origin, so no separate front-end service or CORS configuration is required.
+For front-end development, start the API on port 8000, then run `npm ci` and `npm run dev` from `web/`. Open `http://localhost:5173/console/`; Vite proxies API requests to the local server. In production, Nginx serves the React build and reverse-proxies `/admin`, `/v1`, `/health`, `/ready`, and `/console-config` to FastAPI over the internal Compose network.
 
 Set `API_PUBLIC_BASE_URL` to the public API origin when Relevo is behind a proxy or has a separate public hostname. The connection guide reads this value from `/console-config`; when unset, it uses the origin received by FastAPI.
 

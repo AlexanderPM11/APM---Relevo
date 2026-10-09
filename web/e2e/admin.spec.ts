@@ -68,6 +68,45 @@ test('login, create one-time key, list and revoke it', async ({ page }) => {
   await expect(page.getByText('La clave “Portal de pruebas” quedó revocada.')).toBeVisible()
 })
 
+test('API examples select an active key and model or automatic fallback', async ({ page }) => {
+  await page.route('**/admin/**', async (route) => {
+    const { pathname } = new URL(route.request().url())
+    if (pathname === '/admin/auth/login') {
+      await route.fulfill({ json: { access_token: 'e2e-admin-token', token_type: 'bearer' } })
+      return
+    }
+    if (pathname === '/admin/api-keys') {
+      await route.fulfill({ json: [{ id: 4, name: 'Aplicación web', prefix: 'a1b2c3d4', owner: null, is_active: true, requests_per_minute: 60 }] })
+      return
+    }
+    if (pathname === '/admin/playground/catalog') {
+      await route.fulfill({ json: {
+        api_keys: [{ id: 4, name: 'Aplicación web', prefix: 'a1b2c3d4', owner: null, requests_per_minute: 60 }],
+        models: [{ id: 'llama-3.3-70b-versatile', name: 'llama-3.3-70b-versatile', alias: null, provider: 'groq', provider_name: 'Groq' }],
+      } })
+      return
+    }
+    await route.fulfill({ status: 404, json: { detail: 'Unexpected test request' } })
+  })
+
+  await page.goto('')
+  await page.getByLabel('Correo de administrador').fill('admin@example.com')
+  await page.getByLabel('Contraseña').fill('password-for-e2e')
+  await page.getByRole('button', { name: 'Entrar al panel' }).click()
+  await page.getByRole('button', { name: 'Ejemplos API' }).click()
+
+  await expect(page.getByRole('heading', { name: 'Personaliza el ejemplo' })).toBeVisible()
+  await expect(page.getByLabel('Clave API')).toContainText('Aplicación web')
+  await expect(page.getByLabel('Modelo')).toContainText('Automático · intenta otros modelos si uno falla')
+  await expect(page.getByLabel('Modelo')).toContainText('llama-3.3-70b-versatile · Groq')
+
+  await page.getByLabel('Modelo').selectOption('llama-3.3-70b-versatile')
+  await expect(page.locator('.playground-code code')).toContainText('"model":"llama-3.3-70b-versatile"')
+  await page.getByLabel('Modelo').selectOption('auto')
+  await expect(page.locator('.playground-code code')).toContainText('"model":"auto"')
+  await expect(page.locator('.playground-code code')).not.toContainText('rlv_a1b2c3d4_')
+})
+
 test('T061/T067/T071 parcial: navegador se conecta a FastAPI y gestiona una clave', async ({ page }) => {
   await page.goto('')
   await page.getByLabel('Correo de administrador').fill('playwright-admin@example.com')

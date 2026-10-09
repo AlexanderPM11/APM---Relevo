@@ -281,6 +281,54 @@ async def list_admin_models(session: SessionDep) -> list[dict[str, Any]]:
     ]
 
 
+@router.get("/admin/playground/catalog", dependencies=[admin_guard()])
+async def playground_catalog(session: SessionDep) -> dict[str, Any]:
+    """List active consumer keys and models usable by the API playground."""
+    settings = get_settings()
+    keys_result = await session.execute(
+        select(ApiKey).where(ApiKey.is_active.is_(True)).order_by(ApiKey.name, ApiKey.id)
+    )
+    models_result = await session.execute(
+        select(Model, Provider)
+        .join(Provider)
+        .where(Model.is_enabled.is_(True), Provider.is_enabled.is_(True))
+        .options(selectinload(Model.health))
+        .order_by(Model.tier, Model.priority, Model.name)
+    )
+    now = datetime.now(UTC).replace(tzinfo=None)
+    models = [
+        {
+            "id": model.alias or model.name,
+            "name": model.name,
+            "alias": model.alias,
+            "provider": provider.slug,
+            "provider_name": provider.name,
+        }
+        for model, provider in models_result.all()
+        if provider.adapter in {"openai", "google"}
+        and (provider.slug != "ollama" or settings.router_enable_local_fallback)
+        and provider_is_configured(settings, provider)
+        and (
+            model.health is None
+            or model.health.cooldown_until is None
+            or model.health.cooldown_until <= now
+        )
+    ]
+    return {
+        "api_keys": [
+            {
+                "id": key.id,
+                "name": key.name,
+                "prefix": key.prefix,
+                "owner": key.owner,
+                "requests_per_minute": key.requests_per_minute,
+            }
+            for key in keys_result.scalars()
+        ],
+        "models": models,
+    }
+
+
 @router.post("/admin/providers/{slug}", dependencies=[admin_guard()])
 async def upsert_provider(slug: str, body: ProviderInput, session: SessionDep) -> dict[str, Any]:
     """Create or update provider configuration metadata."""

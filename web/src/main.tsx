@@ -5,6 +5,8 @@ import './styles.css'
 type ApiKey = { id: number; name: string; prefix: string; owner: string | null; is_active: boolean; requests_per_minute: number }
 type CreatedKey = { id: number; name: string; prefix: string; api_key: string }
 type Admin = { email: string }
+type PlaygroundModel = { id: string; name: string; alias: string | null; provider: string; provider_name: string }
+type PlaygroundCatalog = { api_keys: ApiKey[]; models: PlaygroundModel[] }
 
 const TOKEN_SLOT = 'relevo.admin.session'
 
@@ -94,7 +96,8 @@ function App() {
   const [createOpen, setCreateOpen] = useState(false)
   const [confirmRevoke, setConfirmRevoke] = useState<ApiKey | null>(null)
   const [search, setSearch] = useState('')
-  const [tab, setTab] = useState<'keys' | 'connect'>('keys')
+  const [tab, setTab] = useState<'keys' | 'connect' | 'examples'>('keys')
+  const [playgroundCatalog, setPlaygroundCatalog] = useState<PlaygroundCatalog>({ api_keys: [], models: [] })
   const [copied, setCopied] = useState('')
   const [apiBase, setApiBase] = useState(window.location.origin)
   const [apiReady, setApiReady] = useState<boolean | null>(null)
@@ -129,9 +132,19 @@ function App() {
     finally { setLoading(false) }
   }
 
+  const loadPlaygroundCatalog = async () => {
+    try { setPlaygroundCatalog(await request<PlaygroundCatalog>('/admin/playground/catalog')) }
+    catch (e) { setError(e instanceof Error ? e.message : 'No se pudo cargar el catálogo de modelos.') }
+  }
+
   useEffect(() => {
     if (token) void loadKeys()
   }, [token])
+
+  useEffect(() => {
+    if (!token || tab !== 'examples') return
+    void loadPlaygroundCatalog()
+  }, [token, tab])
 
   useEffect(() => {
     const expired = () => { setToken(null); setAdmin(null); setError('Tu sesión expiró. Vuelve a iniciar sesión.') }
@@ -184,6 +197,7 @@ function App() {
       <div className="side-label">PLATAFORMA</div>
       <button className={`nav-item ${tab === 'keys' ? 'active' : ''}`} onClick={() => setTab('keys')}><Icon name="key"/><span>Claves API</span><span className="nav-count">{activeCount}</span></button>
       <button className={`nav-item ${tab === 'connect' ? 'active' : ''}`} onClick={() => setTab('connect')}><Icon name="code"/><span>Conectar una app</span></button>
+      <button className={`nav-item ${tab === 'examples' ? 'active' : ''}`} onClick={() => setTab('examples')}><Icon name="code"/><span>Ejemplos API</span></button>
       <button className="mobile-logout icon-button subtle" title="Cerrar sesión" aria-label="Cerrar sesión" onClick={signOut}><Icon name="logout" size={17}/></button>
       <div className="sidebar-bottom">
         <div className="status-card"><span className={`status-pulse ${apiReady === false ? 'status-down' : ''}`}/><div><strong>{apiReady === null ? 'Comprobando servicio' : apiReady ? 'Servicio listo' : 'Servicio no listo'}</strong><small>{apiReady ? 'Modelos listos para usar' : 'Revisa conexión y modelos'}</small></div></div>
@@ -192,7 +206,7 @@ function App() {
     </aside>
 
     <main className="main-area">
-      <header className="topbar"><div className="breadcrumb"><span>Relevo</span><span className="crumb-slash">/</span><strong>{tab === 'keys' ? 'Claves API' : 'Conectar una app'}</strong></div><div className="topbar-right"><span className={`live-dot ${apiReady === false ? 'status-down' : ''}`}/>{apiReady === null ? 'Comprobando servicio' : apiReady ? 'Servicio listo' : 'Servicio no listo'}</div></header>
+      <header className="topbar"><div className="breadcrumb"><span>Relevo</span><span className="crumb-slash">/</span><strong>{tab === 'keys' ? 'Claves API' : tab === 'examples' ? 'Ejemplos API' : 'Conectar una app'}</strong></div><div className="topbar-right"><span className={`live-dot ${apiReady === false ? 'status-down' : ''}`}/>{apiReady === null ? 'Comprobando servicio' : apiReady ? 'Servicio listo' : 'Servicio no listo'}</div></header>
       {error && <div className="toast error-toast" role="alert"><span>{error}</span><button onClick={() => setError('')}><Icon name="close" size={16}/></button></div>}
       {notice && <div className="toast success-toast" role="status"><Icon name="check" size={16}/><span>{notice}</span><button onClick={() => setNotice('')}><Icon name="close" size={16}/></button></div>}
       <div className="content-wrap">
@@ -206,7 +220,7 @@ function App() {
             </div>
             <div className="list-foot"><span>El secreto completo solo se muestra al crear la clave.</span><span><span className="tiny-pulse"/> Secreto visible una sola vez</span></div>
           </section>
-        </> : <ConnectGuide onCopy={copy} copied={copied} apiBase={apiBase} />}
+        </> : tab === 'connect' ? <ConnectGuide onCopy={copy} copied={copied} apiBase={apiBase} /> : <ApiPlayground catalog={playgroundCatalog} apiBase={apiBase} onCopy={copy} copied={copied} onManageKeys={() => setTab('keys')} onRefresh={() => void loadPlaygroundCatalog()} />}
         <footer className="page-footer"><span>RELEVO <b>·</b> ACCESO A MODELOS, EN UN SOLO LUGAR</span><a href="/openapi.json" target="_blank" rel="noreferrer">Referencia de API <Icon name="external" size={13}/></a></footer>
       </div>
     </main>
@@ -242,6 +256,71 @@ function SecretDialog({ value, name, onClose, onCopy, copied, returnFocus }: { v
 function ConfirmDialog({ keyInfo, onClose, onConfirm, returnFocus }: { keyInfo: ApiKey; onClose: () => void; onConfirm: () => void; returnFocus: HTMLElement | null }) {
   const dialogRef = useDialogFocus(onClose, returnFocus)
   return <div className="modal-backdrop"><section ref={dialogRef} className="modal confirm-modal" role="dialog" aria-modal="true" aria-labelledby="revoke-title"><div className="revoke-mark"><Icon name="trash" size={20}/></div><h2 id="revoke-title">¿Revocar esta clave?</h2><p className="modal-description"><strong>{keyInfo.name}</strong> perderá acceso a Relevo de inmediato. Las aplicaciones que la usan dejarán de conectar.</p><div className="modal-actions"><button className="secondary-button" onClick={onClose}>Conservar clave</button><button className="danger-button" onClick={onConfirm}>Revocar acceso</button></div></section></div>
+}
+
+function ApiPlayground({ catalog, apiBase, onCopy, copied, onManageKeys, onRefresh }: { catalog: PlaygroundCatalog; apiBase: string; onCopy: (text: string, label: string) => void; copied: string; onManageKeys: () => void; onRefresh: () => void }) {
+  const [selectedKeyId, setSelectedKeyId] = useState('')
+  const [selectedModel, setSelectedModel] = useState('auto')
+  const [language, setLanguage] = useState<'curl' | 'javascript' | 'python'>('curl')
+  const endpoint = `${apiBase}/v1/chat/completions`
+  const selectedKey = catalog.api_keys.find((key) => String(key.id) === selectedKeyId) ?? catalog.api_keys[0]
+  const model = selectedModel === 'auto' || catalog.models.some((item) => item.id === selectedModel) ? selectedModel : 'auto'
+  const modelJson = JSON.stringify(model)
+  const keyComment = selectedKey ? `Clave elegida: ${selectedKey.name} (rlv_${selectedKey.prefix}…)` : 'Selecciona o crea una clave API activa.'
+  const samples = {
+    curl: [
+      `# ${keyComment}`,
+      `curl ${endpoint} -H 'Authorization: Bearer $RELEVO_API_KEY' -H 'Content-Type: application/json' -d '${JSON.stringify({ model, messages: [{ role: 'user', content: 'Hola, ¿qué puedes hacer?' }] })}'`,
+    ].join('\n'),
+    javascript: [
+      `// ${keyComment}`,
+      `const response = await fetch('${endpoint}', {`,
+      "  method: 'POST',",
+      '  headers: {',
+      "    Authorization: `Bearer ${process.env.RELEVO_API_KEY}`,",
+      "    'Content-Type': 'application/json',",
+      '  },',
+      '  body: JSON.stringify({',
+      `    model: ${modelJson},`,
+      "    messages: [{ role: 'user', content: 'Hola, ¿qué puedes hacer?' }],",
+      '  }),',
+      '});',
+      'const result = await response.json();',
+      'console.log(result.choices?.[0]?.message?.content);',
+    ].join('\n'),
+    python: [
+      `# ${keyComment}`,
+      'import os',
+      'from openai import OpenAI',
+      '',
+      'client = OpenAI(',
+      `    base_url="${apiBase}/v1",`,
+      '    api_key=os.environ["RELEVO_API_KEY"],',
+      ')',
+      '',
+      'response = client.chat.completions.create(',
+      `    model=${modelJson},`,
+      '    messages=[{"role": "user", "content": "Hola, ¿qué puedes hacer?"}],',
+      ')',
+      'print(response.choices[0].message.content)',
+    ].join('\n'),
+  }
+  return <>
+    <section className="page-heading playground-heading"><div><div className="eyebrow"><span className="eyebrow-line"/>PRUEBA Y CONSTRUYE</div><h1>Una llamada.<br/><em>Tu elección.</em></h1><p className="intro">Elige la clave de tu aplicación y un modelo disponible. Copia el ejemplo listo para integrar.</p></div><div className="playground-orbit" aria-hidden="true"><span>API</span><i/><i/><i/></div></section>
+    <section className="playground-panel">
+      <div className="playground-panel-head"><div><span className="section-kicker">CONFIGURA TU SOLICITUD</span><h2>Personaliza el ejemplo</h2></div><span className="available-count"><i/>{catalog.models.length} {catalog.models.length === 1 ? 'modelo disponible' : 'modelos disponibles'}</span></div>
+      <div className="playground-controls">
+        <label className="playground-field"><span>Clave API de tu aplicación</span><select aria-label="Clave API" value={selectedKey?.id ?? ''} onChange={(event) => setSelectedKeyId(event.target.value)} disabled={!catalog.api_keys.length}><option value="" disabled>{catalog.api_keys.length ? 'Selecciona una clave' : 'No hay claves activas'}</option>{catalog.api_keys.map((key) => <option key={key.id} value={key.id}>{key.name} · rlv_{key.prefix}</option>)}</select><small>La clave completa solo se muestra al crearla. El código usará <code>RELEVO_API_KEY</code>.</small></label>
+        <label className="playground-field"><span>Modelo para la llamada</span><select aria-label="Modelo" value={model} onChange={(event) => setSelectedModel(event.target.value)}><option value="auto">Automático · intenta otros modelos si uno falla</option>{catalog.models.map((item) => <option key={`${item.provider}-${item.id}`} value={item.id}>{item.id} · {item.provider_name}</option>)}</select><small>Automático usa el enrutador y sus reintentos. Elige un modelo para fijar la llamada.</small></label>
+      </div>
+      {!catalog.api_keys.length && <div className="playground-empty"><span>No hay claves activas para esta integración.</span><button className="text-action" onClick={onManageKeys}>Crear una clave <Icon name="arrow" size={15}/></button></div>}
+      {catalog.models.length === 0 && <div className="playground-empty"><span>No hay modelos configurados con credenciales de proveedor disponibles.</span></div>}
+      <div className="playground-code-head"><div><span className="section-kicker">EJEMPLO DE SOLICITUD</span><p>POST <code>{endpoint}</code></p></div><button className="code-copy" onClick={() => void onCopy(samples[language], 'playground-snippet')}><Icon name={copied === 'playground-snippet' ? 'check' : 'copy'} size={14}/>{copied === 'playground-snippet' ? 'Copiado' : 'Copiar código'}</button></div>
+      <div className="code-window playground-code"><div className="code-top"><div className="code-lights"><i/><i/><i/></div><div className="code-tabs">{(['curl', 'javascript', 'python'] as const).map((item) => <button key={item} className={language === item ? 'selected' : ''} onClick={() => setLanguage(item)}>{item === 'javascript' ? 'Node.js' : item === 'python' ? 'Python' : 'cURL'}</button>)}</div></div><pre><code>{samples[language]}</code></pre></div>
+      <div className="playground-note"><Icon name="shield" size={16}/><span>El ejemplo nunca incluye el secreto: guárdalo en <code>RELEVO_API_KEY</code> en el servidor de tu aplicación, no en el navegador.</span></div>
+    </section>
+    <section className="playground-models"><div className="playground-models-title"><div><span className="section-kicker">CATÁLOGO ENRUTABLE</span><h2>Modelos disponibles</h2></div><button className="text-action" onClick={onRefresh}>Actualizar catálogo <Icon name="refresh" size={15}/></button></div>{catalog.models.length ? <div className="model-chip-list">{catalog.models.map((item) => <span className="model-chip" key={`${item.provider}-${item.id}`}><i/>{item.id}<small>{item.provider_name}</small></span>)}</div> : <p className="catalog-empty">Configura una credencial de proveedor y habilita sus modelos para que aparezcan aquí.</p>}</section>
+  </>
 }
 
 function ConnectGuide({ onCopy, copied, apiBase }: { onCopy: (text: string, label: string) => void; copied: string; apiBase: string }) {
