@@ -62,13 +62,13 @@ test('login, create one-time key, list and revoke it', async ({ page }) => {
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([])
   await page.getByRole('button', { name: 'Revocar', exact: true }).click()
   await page.getByRole('button', { name: 'Revocar acceso' }).click()
-  await expect(page.getByText('Revocada', { exact: true })).toBeVisible()
+  await expect(page.locator('.key-row').filter({ hasText: 'Portal de pruebas' }).getByText('Revocada', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'Conectar una app' }).click()
   await expect(page.getByText('http://127.0.0.1:8765/v1', { exact: true })).toBeVisible()
   await expect(page.getByText('La clave “Portal de pruebas” quedó revocada.')).toBeVisible()
 })
 
-test('browser connects to FastAPI and manages a key end to end', async ({ page }) => {
+test('T061/T067/T071 parcial: navegador se conecta a FastAPI y gestiona una clave', async ({ page }) => {
   await page.goto('')
   await page.getByLabel('Correo de administrador').fill('playwright-admin@example.com')
   await page.getByLabel('Contraseña').fill('playwright-only-password')
@@ -86,7 +86,7 @@ test('browser connects to FastAPI and manages a key end to end', async ({ page }
   await expect(page.getByText(appName)).toBeVisible()
   await page.getByRole('button', { name: 'Revocar', exact: true }).click()
   await page.getByRole('button', { name: 'Revocar acceso' }).click()
-  await expect(page.getByText('Revocada', { exact: true })).toBeVisible()
+  await expect(page.locator('.key-row').filter({ hasText: appName }).getByText('Revocada', { exact: true })).toBeVisible()
 })
 
 test('login screen and key guide meet automated accessibility checks', async ({ page }) => {
@@ -109,7 +109,7 @@ test('login screen and key guide meet automated accessibility checks', async ({ 
   await expect(page.getByText('http://localhost:8000/v1', { exact: true })).toBeVisible()
 })
 
-test('mobile layout has no horizontal page overflow', async ({ page }) => {
+test('T076/T077/T079/T080 parcial: layout de móvil y escritorio sin desbordamiento', async ({ page }) => {
   await page.route('**/admin/auth/login', (route) => route.fulfill({ json: { access_token: 'e2e-admin-token' } }))
   await page.route('**/admin/api-keys', (route) => route.fulfill({ json: [] }))
   await page.goto('')
@@ -133,7 +133,7 @@ test('mobile layout has no horizontal page overflow', async ({ page }) => {
   expect(await page.evaluate(() => sessionStorage.getItem('relevo.admin.session'))).toBeNull()
 })
 
-test('creation dialog keeps keyboard focus inside and has no automated accessibility violations', async ({ page }) => {
+test('T084/T085 parcial: diálogo conserva el foco de teclado y pasa axe', async ({ page }) => {
   await page.emulateMedia({ reducedMotion: 'reduce' })
   await page.route('**/admin/auth/login', (route) => route.fulfill({ json: { access_token: 'e2e-admin-token' } }))
   await page.route('**/admin/api-keys', (route) => route.fulfill({ json: [] }))

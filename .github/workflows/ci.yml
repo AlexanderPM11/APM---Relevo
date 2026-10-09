@@ -25,11 +25,15 @@ jobs:
       - run: pytest
       - run: npm ci
         working-directory: web
-      - run: npx playwright install --with-deps chromium
+      - run: npx playwright install --with-deps chromium firefox webkit
         working-directory: web
       - run: npm run build
         working-directory: web
       - run: npm run test:e2e
+        working-directory: web
+      - run: npm run test:e2e:mysql
+        working-directory: web
+      - run: npm run test:e2e:image
         working-directory: web
       - uses: actions/upload-artifact@v4
         if: always()

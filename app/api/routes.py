@@ -159,7 +159,6 @@ async def available_models(
         if provider_is_configured(settings, provider)
         if provider.adapter in {"openai", "google"}
         if model.health is None
-        or model.health.state != "open"
         or model.health.cooldown_until is None
         or model.health.cooldown_until <= now
     ]
@@ -170,7 +169,8 @@ async def available_models(
 async def login(body: LoginRequest, request: Request, session: SessionDep) -> dict[str, str]:
     """Authenticate an administrator and issue a short-lived JWT."""
     host = request.client.host if request.client else "unknown"
-    if not await allow_request(f"admin-login:{host}", 5, 300):
+    settings = get_settings()
+    if not await allow_request(f"admin-login:{host}", settings.admin_login_attempt_limit, 300):
         raise HTTPException(429, "Too many login attempts", headers={"Retry-After": "300"})
     result = await session.execute(select(AdminUser).where(AdminUser.email == str(body.email)))
     admin = result.scalar_one_or_none()
@@ -180,7 +180,6 @@ async def login(body: LoginRequest, request: Request, session: SessionDep) -> di
         or not verify_password(body.password, admin.password_hash)
     ):
         raise HTTPException(401, "Invalid email or password")
-    settings = get_settings()
     token = create_access_token(
         str(admin.email),
         settings.jwt_secret.get_secret_value(),

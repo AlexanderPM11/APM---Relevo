@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     jwt_secret: SecretStr = SecretStr("development-only-change-me-before-deploying")
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 60
+    admin_login_attempt_limit: int = Field(default=5, ge=1, le=1000)
     api_key_pepper: SecretStr = SecretStr("development-only-change-me")
     admin_email: EmailStr | None = None
     admin_password: SecretStr | None = None

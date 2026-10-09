@@ -3,7 +3,7 @@ import path from 'node:path'
 import { mkdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
-const workspace = path.resolve(fileURLToPath(new URL('..', import.meta.url)))
+const workspace = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const testOutput = path.join(workspace, 'output', 'playwright')
 mkdirSync(testOutput, { recursive: true })
 
@@ -18,12 +18,17 @@ export default defineConfig({
   fullyParallel: true,
   forbidOnly: Boolean(process.env.CI),
   retries: process.env.CI ? 1 : 0,
-  workers: process.env.CI ? 2 : undefined,
+  workers: process.env.CI ? 2 : 1,
   reporter: [
     ['list'],
     ['json', { outputFile: path.join(workspace, 'test-results', 'frontend-test-report.json') }],
   ],
   outputDir: path.join(workspace, 'output', 'playwright'),
+  projects: [
+    { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
+    { name: 'firefox', testMatch: '**/admin.spec.ts', use: { ...devices['Desktop Firefox'] } },
+    { name: 'webkit', testMatch: '**/admin.spec.ts', use: { ...devices['Desktop Safari'] } },
+  ],
   use: {
     baseURL: 'http://127.0.0.1:5173/console/',
     trace: 'retain-on-failure',
@@ -37,15 +42,24 @@ export default defineConfig({
       cwd: workspace,
       env: {
         APP_ENV: 'development',
-        DATABASE_URL: 'sqlite+aiosqlite:///:memory:',
-        DATABASE_AUTO_CREATE: 'true',
+        DATABASE_URL: process.env.RELEVO_E2E_DATABASE_URL || 'sqlite+aiosqlite:///:memory:',
+        DATABASE_AUTO_CREATE: process.env.RELEVO_E2E_DATABASE_AUTO_CREATE ?? 'true',
         ADMIN_EMAIL: process.env.RELEVO_E2E_ADMIN_EMAIL,
         ADMIN_PASSWORD: process.env.RELEVO_E2E_ADMIN_PASSWORD,
+        ADMIN_LOGIN_ATTEMPT_LIMIT: '100',
         JWT_SECRET: 'playwright-only-jwt-secret-long-enough-for-tests',
         API_KEY_PEPPER: 'playwright-only-api-key-pepper-long-enough',
+        GROQ_API_KEY: 'playwright-provider-secret',
       },
       reuseExistingServer: false,
       timeout: 60_000,
+    },
+    {
+      command: 'node scripts/mock-provider.mjs',
+      url: 'http://127.0.0.1:8766/health',
+      cwd: workspace,
+      reuseExistingServer: false,
+      timeout: 15_000,
     },
     {
       command: 'npm run dev -- --host 127.0.0.1 --strictPort',

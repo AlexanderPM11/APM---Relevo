@@ -10,17 +10,17 @@ El objetivo es que una persona pueda entrar al panel, crear una clave, conectar 
 
 | Área | Evidencia disponible | Límite de la evidencia |
 |---|---|---|
-| Navegador | El último informe `test-results/frontend-test-report.json` registra 7 pruebas aprobadas y 0 fallidas en Chromium. Incluye UI con stubs y llamadas reales a FastAPI. | Backend aislado en SQLite en memoria; no comprueba MySQL ni una imagen desplegada. |
+| Navegador | Última ejecución: 18/18 pruebas aprobadas entre Chromium, Firefox y WebKit; 8 escenarios de API/UI integral en Chromium y 5 escenarios de interfaz por cada motor. | No comprueba la imagen desplegada, dispositivos físicos ni servicios externos. |
 | Flujo de claves | La suite verifica acceso, creación, mostrar/ocultar, respuesta de una sola vez, listado, secreto oculto, revocación y rechazo de la clave revocada. | No comprueba portapapeles del sistema ni una llamada de chat a un proveedor externo. |
 | Accesibilidad | axe-core verifica acceso, panel, guía y diálogo de creación; Playwright verifica el ciclo de foco, Escape y retorno del foco. | No incluye lector de pantalla, todos los estados de error ni pruebas manuales WCAG. |
 | Móvil y escritorio | El panel autenticado no desborda a 320, 360, 390, 768, 1024 y 1440 px; el cierre de sesión permanece visible en móvil. | No incluye rotación, contenido largo, todos los recorridos en cada ancho ni dispositivos físicos. |
-| Backend | 17 pruebas pytest aprobadas. Dos pruebas Playwright adicionales ejercitan FastAPI por HTTP y SQLite independiente con claves de prueba. | SQLite no verifica transacciones, migraciones ni operaciones específicas de MySQL. |
+| Backend | 17 pruebas `pytest tests/unit` aprobadas en el pase final. Los escenarios Playwright de API ejercitan FastAPI por HTTP; se comprobaron con SQLite y MySQL 8 temporal. | No cubre todos los contratos del catálogo ni concurrencia sostenida de cuotas. |
 | Compilación y estilo | `npm run build` y `ruff check app tests` completaron correctamente. | La compilación no valida despliegue ni proveedores externos. |
-| Operación | El motor Docker no está accesible en este equipo; la suite HTTP local funciona con una base SQLite temporal en memoria. | Sigue pendiente MySQL, migraciones de la imagen final y verificación con proveedor real. |
+| Operación | Docker Engine 29.8.1 y Compose responden saludables. `npm run test:e2e:image` construyó una imagen desechable y aprobó health, Alembic, consola React, ready, administración, chat con fallback, CORS permitido/denegado, reinicio de API/MySQL, revocación y respaldo/restauración de MySQL temporal. | No se probó proveedor externo real ni carga/rendimiento controlados. |
 
-La última ejecución Playwright se realizó el 9 de octubre de 2026 y aprobó 7/7 pruebas. La última ejecución pytest aprobó 17 pruebas. Son avances parciales: el catálogo T001–T100 continúa sin certificación global y se debe registrar cada caso conforme se implemente.
+La última ejecución Playwright se realizó el 9 de octubre de 2026: 18/18 aprobadas entre los tres motores contra SQLite y 18/18 aprobadas contra MySQL 8 aislado con migración Alembic. El smoke de imagen Docker aprobó T091, T092, T093, T094, T095 y T098 en la imagen recién construida, incluidos recorrido de navegador crear/usar/revocar, fallback 429, persistencia tras reinicio, CORS por origen y restauración de respaldo. También se validó exclusión de modelos en cooldown; esto corrigió el catálogo `/v1/models`. En el pase final aprobaron 17 pruebas pytest, Ruff, formato, mypy y compilación del frontend. El catálogo T001–T100 sigue parcialmente ejecutado.
 
-**Implementado en esta iteración:** API `/console-config` para ofrecer la URL pública configurable mediante `API_PUBLIC_BASE_URL`; estados del panel basados en `/ready`; límites de claves alineados entre React y FastAPI (1–10.000 solicitudes/minuto, nombre y propietario hasta 120 caracteres); salida de sesión que limpia datos sensibles; diálogos accesibles con foco atrapado, Escape y retorno de foco; comprobaciones axe sobre acceso, panel, guía y diálogo; adaptación sin desbordamiento entre 320 y 1440 px; flujo real de navegador y API en una base SQLite en memoria; integración de Playwright en CI.
+**Implementado y verificado en esta iteración:** API `/console-config` para URL pública configurable mediante `API_PUBLIC_BASE_URL`; estados del panel basados en `/ready`; límites alineados (1–10.000 solicitudes/minuto y nombre/propietario hasta 120 caracteres); limpieza de sesión; diálogo con foco atrapado, Escape y retorno de foco comprobado en los tres motores; axe sobre acceso, panel, guía y diálogo; adaptación sin desbordamiento a 320, 360, 390, 768, 1024 y 1440 px; recorrido HTTP/browser real; servidor proveedor simulado que recorre el adaptador real y fallback; MySQL temporal inicializado con Alembic; Playwright instalado para Chromium, Firefox y WebKit; CI ampliada a los tres motores.
 
 **Límites funcionales actuales:** `stream: true` responde 501. El enrutador selecciona adaptadores `openai` y `google`; otros adaptadores requieren implementación y verificación antes de anunciarse como disponibles. Proveedores y modelos tienen rutas administrativas, pero la consola actual presenta claves y guía de conexión. La configuración contempla proveedores sin credencial cuando su implementación lo permite; las pruebas no deben exigir una clave externa para todos los proveedores.
 
@@ -32,12 +32,12 @@ Se necesitan cuatro grupos con propósito explícito:
 
 | Grupo | Sistema utilizado | Qué demuestra |
 |---|---|---|
-| API | `request.get/post/patch/put/delete` contra FastAPI real y base aislada. La suite local usa SQLite en memoria; la etapa MySQL debe añadirse al entorno de integración. | Contratos HTTP, autorización, ciclo de claves y acceso con clave revocada. La persistencia MySQL permanece pendiente. |
+| API | `request.get/post/patch/put/delete` contra FastAPI real y base aislada. La suite rápida usa SQLite en memoria; el comando MySQL levanta un contenedor temporal, aplica Alembic y lo elimina. | Contratos ejercitados, autorización, ciclo de claves, lectura de modelos, acceso tras revocación y respuesta con fallback simulado. |
 | Interfaz aislada | Navegador y `page.route` para escenarios controlados de demora y error. | Estados del panel, validación, interacción y presentación. |
-| Integración completa | Navegador, FastAPI y SQLite en memoria en la suite local; MySQL y proveedor simulado quedan para el entorno dedicado. | El flujo real de acceso, creación y revocación sin interceptar las rutas de Relevo. |
+| Integración completa | Navegador, FastAPI, SQLite o MySQL 8 temporal; servidor HTTP proveedor simulado y adaptador real. | Acceso, crear/revocar clave, conexión a `/v1/models` y chat con fallback sin interceptar rutas de Relevo ni llamar a proveedores externos. |
 | Verificación de despliegue | Aplicación publicada en un entorno de prueba y proveedor gratuito disponible, cuando esté configurado. | Conectividad real y configuración final; ejecutar bajo demanda con límites pequeños. |
 
-La simulación de proveedores debe ser un servidor HTTP al que llama el adaptador real de Relevo. Debe poder devolver éxito, 429, 5xx, retrasos y respuestas inválidas. Así se prueba la integración del backend sin depender de cuotas, cuentas externas o cambios de catálogo.
+El proveedor simulado actual devuelve 503 en el primer modelo y éxito en el segundo. Ampliar el servidor para cubrir 429, retrasos, respuestas inválidas y fallos de conexión; los escenarios aún no implementados permanecen pendientes.
 
 ### Entorno y datos
 
@@ -77,6 +77,8 @@ Esta estructura está propuesta, no creada. Mantener los selectores basados en r
 **P0:** falla que impide acceder, conecta sin autorización, rompe creación o revocación, expone secretos, consume cuotas indebidamente o invalida el flujo principal. **P1:** función importante, recuperación ante errores, accesibilidad o adaptación visual. **P2:** comportamiento complementario o presentación de menor riesgo.
 
 Cada ejecución debe registrar ID, versión del código, entorno, navegador, viewport, datos preparados, resultado, duración y evidencia. Estados permitidos: pendiente, aprobado, fallido, bloqueado y no aplicable con motivo. Una prueba que pasa solo al reintentar se registra como intermitente y se investiga. No convertir un escenario bloqueado en aprobado.
+
+**Registro de la última ejecución (9 de octubre de 2026, árbol de trabajo local):** Playwright aprobó 18/18 con SQLite y 18/18 con MySQL 8 + Alembic. UI: 5 escenarios por motor (Chromium, Firefox y WebKit); API y chat: 3 escenarios en Chromium. `npm run test:e2e:image` construyó una etiqueta de imagen exclusiva, probó una DB limpia y eliminó imagen, contenedores y red temporales al terminar; migraciones, health, ready, `/console/`, login, creación desde navegador, chat con la clave, revocación, rechazo posterior, fallback 429, cooldown, reinicio persistente, CORS y respaldo/restauración pasaron. Pytest: 17/17; `ruff check`: aprobado; `ruff format --check`: 37 archivos; mypy: 22 archivos; `npm run build`: aprobado. Los títulos de pruebas enlazan los escenarios que cubren. T099 depende de una credencial de proveedor real que aún no está configurada; T097 requiere una medición controlada. Las coberturas parciales de viewport, axe y diálogo no sustituyen pruebas manuales o con contenido largo. Evidencia Playwright: `test-results/frontend-test-report.json` (último informe, MySQL) y `output/playwright/` (capturas/trazas de fallos previos, solo con datos sintéticos).
 
 ## 4 Catálogo de 100 escenarios
 
@@ -273,28 +275,28 @@ Los intervalos representan la secuencia de entrega. Se cierra una etapa cuando e
 
 | Etapa | Avance | Trabajo y entregable | Responsable principal | Condición para cerrar | Estimación |
 |---|---|---|---|---|---|
-| E0 | 0–10 | Fixtures y configuración Playwright; servidor API local con SQLite en memoria. | Backend y verificación | API tests y un recorrido real ejecutables con datos limpios. **Parcial:** MySQL y proveedor simulado pendientes. | 1–2 días |
-| E1 | 10–25 | Autenticación y ciclo de claves; casos T001–T025. | Backend | P0 de acceso y claves aprobados; secretos ausentes en listas y registros. **Parcial:** login, crear/listar/revocar y protección del secreto están cubiertos; resta ampliar el catálogo. | 3–4 días |
-| E2 | 25–40 | Proveedores, modelos, fallback y cuotas; T026–T060. | Backend | Selección y cuotas verificadas en MySQL, incluida concurrencia controlada. | 3–5 días |
-| E3 | 40–60 | Sistema visual, navegación adaptable, formularios, diálogos y estados del panel. | Frontend y diseño | Flujos principales utilizables entre 320 y 1920 px; salida de sesión accesible. **Parcial:** se verificó 320–1440 px. | 4–6 días |
-| E4 | 60–75 | Pruebas de interfaz y recorridos integrales; T061–T075 y T091–T094. | Frontend y verificación | Crear y revocar desde navegador contra backend real, sin interceptar Relevo. **Parcial:** recorrido aprobado sobre SQLite en memoria. | 3–4 días |
-| E5 | 75–85 | Accesibilidad, capturas base y tres motores; T076–T090 y T096. | Diseño y verificación | axe, teclado y matriz visual aprobados; excepciones documentadas. **Parcial:** Chromium, axe y teclado aprobados en los estados indicados. | 2–3 días |
-| E6 | 85–95 | Rendimiento, CORS, reinicios, respaldo y CI; T095, T097 y T098. | Operación y desarrollo | Imagen reproducible y evidencia de recuperación y presupuesto de rendimiento. | 2–3 días |
+| E0 | 0–10 | Fixtures y configuración Playwright; FastAPI local en SQLite y MySQL temporal aislado. | Backend y verificación | API tests y recorrido real ejecutables con datos limpios. **Parcial:** simulador cubre 503/fallback; faltan respuestas 429, timeout e inválida. | 1–2 días |
+| E1 | 10–25 | Autenticación y ciclo de claves; casos T001–T025. | Backend | P0 de acceso y claves aprobados; secretos ausentes en listas y registros. **Parcial:** salud, login, creación/listado/revocación y límites básicos probados; expiración, permisos y matrices completas pendientes. | 3–4 días |
+| E2 | 25–40 | Proveedores, modelos, fallback y cuotas; T026–T060. | Backend | Selección y cuotas verificadas en MySQL, incluida concurrencia controlada. **Parcial:** CRUD básico y fallback 503 pasan; faltan escenarios de cuotas/concurrencia y fallos del catálogo. | 3–5 días |
+| E3 | 40–60 | Sistema visual, navegación adaptable, formularios, diálogos y estados del panel. | Frontend y diseño | Flujos principales utilizables entre 320 y 1920 px; salida de sesión accesible. **Parcial:** reflow de 320–1440 px y salida comprobada en Chromium; falta 1920 px y revisión visual completa. | 4–6 días |
+| E4 | 60–75 | Pruebas de interfaz y recorridos integrales; T061–T075 y T091–T094. | Frontend y verificación | Crear, consultar modelos y revocar desde navegador/API real, sin interceptar Relevo. **Parcial:** aprobado con SQLite y MySQL; chat con fallback simulado 503 también aprobado. | 3–4 días |
+| E5 | 75–85 | Accesibilidad, capturas base y tres motores; T076–T090 y T096. | Diseño y verificación | axe, teclado y matriz visual aprobados; excepciones documentadas. **Parcial:** axe y flujo de foco aprobados en Chromium/Firefox/WebKit; falta evaluación manual completa y Android/iPhone físicos. | 2–3 días |
+| E6 | 85–95 | Rendimiento, CORS, reinicios, respaldo y CI; T095, T097 y T098. | Operación y desarrollo | Imagen reproducible y evidencia de recuperación y presupuesto de rendimiento. **Parcial:** T091, T092, T093, T094, T095 y T098 aprobados en imagen Docker nueva; falta medición de rendimiento controlada (T097). | 2–3 días |
 | E7 | 95–100 | Verificación con proveedor real, revisión final y publicación; T099–T100. | Responsable del producto y operación | Sin P0 abiertos; informe final firmado con alcance y limitaciones reales. | 1–2 días |
 
 **Estimación orientativa:** 19–29 días efectivos de una persona con dedicación continua. No es una fecha comprometida: disponibilidad de Docker, defectos de concurrencia, nuevos módulos o cambios de streaming pueden modificarla. La creación de streaming queda fuera de esta estimación; se verifica el rechazo 501 actual.
 
 **Dependencias:** E1 y E2 dependen de E0. E3 puede avanzar después de definir contratos en E1. E4 requiere E1–E3; E5 se apoya en E3/E4; E6 integra los resultados anteriores; E7 requiere todas las etapas aplicables. No publicar una capacidad por tener una pantalla si el backend no la soporta.
 
-### Primeras acciones ejecutables
+### Trabajo pendiente más próximo
 
-1. Recuperar acceso a Docker o habilitar un MySQL exclusivo de pruebas, y confirmar la imagen final.
-2. Añadir el proyecto API de Playwright con `request` y tres pruebas iniciales: login, crear/listar clave y revocar/denegar consumidor.
-3. Preparar el proveedor HTTP simulado y conectar un modelo de prueba al adaptador real.
-4. Crear el recorrido integral T091 sin respuestas administrativas interceptadas.
-5. Corregir ancho mínimo, cierre de sesión móvil, estados fijos y URL pública.
-6. Aplicar escala tipográfica, tarjetas de claves y comportamiento de diálogos.
-7. Ampliar la matriz visual y de accesibilidad antes de incorporar pantallas administrativas adicionales.
+1. Completar T001–T100 con ejecución verificable: expiración, autorización por rol, catálogo íntegro, cuotas y concurrencia, errores 429/timeout, y métricas.
+2. Ampliar proveedor simulado a 429, timeout, corte de conexión y JSON malformado; comprobar cooldown y circuit breaker.
+3. Medir rendimiento controlado con perfil móvil y lista grande (T097); T091–T095 y T098 ya tienen smoke en la imagen, según el alcance indicado en el registro.
+4. Completar matriz hasta 1920 px, capturas revisadas y casos con texto largo, ampliación 200 % y rotación.
+5. Ejecutar auditoría manual de accesibilidad y pruebas en dispositivos Android/iPhone físicos.
+6. Medir LCP/CLS/respuesta de interacción y carga sostenida en un entorno controlado.
+7. Probar un proveedor externo gratuito solo si se configura una cuenta y una credencial; registrar límites y condiciones vigentes.
 
 ## 7 Matriz de dispositivos y ejecución
 
@@ -344,13 +346,13 @@ npm run test:e2e
 npm run build
 ```
 
-**Estado actual:** `npm run test:e2e` levanta automáticamente FastAPI en el puerto 8765 con SQLite en memoria y Vite en 5173, ejecuta stubs de UI y dos pruebas HTTP contra el servidor real. No necesita Docker ni credenciales de proveedores. La creación automática de tablas (`DATABASE_AUTO_CREATE=true`) se activa únicamente en ese proceso de prueba.
+**Estado actual:** `npm run test:e2e` levanta FastAPI en el puerto 8765 con SQLite en memoria, un proveedor simulado en 8766 y Vite en 5173. `npm run test:e2e:mysql` crea un contenedor MySQL 8 aislado, aplica `alembic upgrade head`, desactiva creación automática de tablas, ejecuta la suite y elimina el contenedor. `npm run test:e2e:image` construye una etiqueta exclusiva, red, MySQL e imagen Docker temporales; verifica migraciones, consola, T091–T095 y T098 dentro del alcance descrito arriba, y los limpia al salir. Las pruebas corren API en Chromium y los flujos de interfaz en Chromium, Firefox y WebKit; usan claves sintéticas y no requieren credenciales externas.
 
-**Pendiente:** separar proyectos Playwright `api`, `ui`, `integrated` y `deployment`, configurar MySQL de pruebas, añadir el servidor de proveedor simulado y cubrir T001–T100. La verificación de despliegue y de proveedor real se ejecuta bajo demanda.
+**Pendiente:** separar proyectos Playwright `api`, `ui`, `integrated` y `deployment`, y cubrir los casos restantes de T001–T100. La verificación con proveedor externo se ejecuta bajo demanda y requiere una credencial elegida por el administrador.
 
 En cada propuesta de cambio, ejecutar pruebas unitarias, build y comprobaciones rápidas de API y Chromium. Antes de publicar, ejecutar suite de MySQL, los tres motores, accesibilidad y capturas. Conservar informe HTML/JSON y trazas de fallos sintéticos con retención definida. La configuración de CI actual ejecuta calidad de Python; añadir instalación de Node y las suites de Playwright.
 
-Los navegadores se instalan desde `web` con `npx playwright install chromium firefox webkit`; en un runner Linux puede necesitarse `--with-deps`. Usar versiones del lockfile y el mismo entorno de renderizado para las capturas base. No actualizar bases automáticamente para hacer pasar un cambio visual.
+Los navegadores se instalan desde `web` con `npx playwright install chromium firefox webkit`; CI usa `--with-deps`. Usar versiones del lockfile y el mismo entorno de renderizado para las capturas base. No actualizar bases automáticamente para hacer pasar un cambio visual.
 
 ## 10 Referencias
 

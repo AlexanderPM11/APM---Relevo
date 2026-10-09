@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react'
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import './styles.css'
 
@@ -33,7 +33,10 @@ function useDialogFocus(onClose: () => void, returnFocus?: HTMLElement | null) {
     document.addEventListener('keydown', onKeyDown)
     return () => {
       document.removeEventListener('keydown', onKeyDown)
-      window.setTimeout(() => (returnFocus ?? previous)?.focus(), 0)
+      const target = returnFocus ?? previous
+      window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
+        if (target?.isConnected) target.focus({ preventScroll: true })
+      }))
     }
   }, [])
   return dialogRef
@@ -97,10 +100,16 @@ function App() {
   const [apiReady, setApiReady] = useState<boolean | null>(null)
   const dialogReturnFocus = useRef<HTMLElement | null>(null)
 
-  function openCreateDialog() {
-    dialogReturnFocus.current = document.activeElement as HTMLElement
+  function openCreateDialog(event: React.MouseEvent<HTMLButtonElement>) {
+    dialogReturnFocus.current = event.currentTarget
     setCreateOpen(true)
   }
+
+  useLayoutEffect(() => {
+    if (!createOpen && dialogReturnFocus.current?.isConnected) {
+      dialogReturnFocus.current.focus({ preventScroll: true })
+    }
+  }, [createOpen])
 
   useEffect(() => {
     void fetch('/console-config').then(async (response) => {
