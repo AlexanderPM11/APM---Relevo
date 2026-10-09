@@ -40,8 +40,8 @@ services:
       app:
         condition: service_healthy
     restart: unless-stopped
-    ports:
-      - "127.0.0.1:8080:80"
+    # ports:
+    #   - "127.0.0.1:8080:80"
     expose:
       - "80"
     networks:
