@@ -31,6 +31,7 @@ from app.db.models import (
 )
 from app.db.session import get_session
 from app.providers.base import ProviderError
+from app.providers.catalog import refresh_provider_catalog
 from app.router.service import complete_with_fallback, provider_is_configured
 from app.schemas.chat import ChatCompletionRequest
 
@@ -154,8 +155,9 @@ async def chat_completions(
 async def available_models(
     session: SessionDep, _: Annotated[ApiKey, Depends(require_api_key)]
 ) -> dict[str, Any]:
-    """List models whose provider currently has credentials configured."""
+    """List models discovered from configured provider catalogs."""
     settings = get_settings()
+    await refresh_provider_catalog(session, settings)
     result = await session.execute(
         select(Model, Provider)
         .join(Provider)
@@ -356,6 +358,7 @@ async def list_admin_models(session: SessionDep) -> list[dict[str, Any]]:
 async def playground_catalog(session: SessionDep) -> dict[str, Any]:
     """List active consumer keys and models usable by the API playground."""
     settings = get_settings()
+    await refresh_provider_catalog(session, settings)
     keys_result = await session.execute(
         select(ApiKey).where(ApiKey.is_active.is_(True)).order_by(ApiKey.name, ApiKey.id)
     )
@@ -369,7 +372,7 @@ async def playground_catalog(session: SessionDep) -> dict[str, Any]:
     now = datetime.now(UTC).replace(tzinfo=None)
     models = [
         {
-            "id": model.alias or model.name,
+            "id": model.alias or f"{provider.slug}/{model.name}",
             "name": model.name,
             "alias": model.alias,
             "provider": provider.slug,

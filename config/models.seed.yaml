@@ -1,5 +1,4 @@
-# Free-first catalog, checked 2026-10-08. Quotas and model availability change;
-# review provider dashboards and terms before relying on a model.
+# Provider connection metadata. Model inventories are fetched from provider APIs at runtime.
 providers:
   - slug: groq
     name: Groq
@@ -10,20 +9,6 @@ providers:
     uses_data_for_training: unknown
     tier: 1
     adapter: openai
-    models:
-      - name: openai/gpt-oss-120b
-        alias: fast
-        priority: 10
-        weight: 3
-        context_max: 32768
-        capabilities: [text, tools, json]
-        limits: []
-      - name: llama-3.3-70b-versatile
-        is_enabled: false
-        priority: 1000
-        context_max: 32768
-        capabilities: [text]
-        limits: []
   - slug: cerebras
     name: Cerebras
     base_url: https://api.cerebras.ai/v1
@@ -33,14 +18,6 @@ providers:
     uses_data_for_training: unknown
     tier: 1
     adapter: openai
-    models:
-      - name: gpt-oss-120b
-        alias: fast
-        priority: 20
-        weight: 2
-        context_max: 8192
-        capabilities: [text, tools, json]
-        limits: []
   - slug: google-ai-studio
     name: Google AI Studio
     base_url: https://generativelanguage.googleapis.com/v1beta
@@ -50,20 +27,6 @@ providers:
     uses_data_for_training: unknown
     tier: 2
     adapter: google
-    models:
-      - name: gemini-2.0-flash
-        is_enabled: false
-        priority: 1000
-        context_max: 8192
-        capabilities: [text]
-        limits: []
-      - name: gemini-3.8-flash
-        alias: balanced
-        priority: 30
-        weight: 2
-        context_max: 1048576
-        capabilities: [text]
-        limits: []
   - slug: openrouter
     name: OpenRouter
     base_url: https://openrouter.ai/api/v1
@@ -73,14 +36,6 @@ providers:
     uses_data_for_training: unknown
     tier: 3
     adapter: openai
-    models:
-      - name: openrouter/free
-        alias: free
-        priority: 40
-        weight: 2
-        context_max: 200000
-        capabilities: [text, tools, json, vision]
-        limits: []
   - slug: cloudflare
     name: Cloudflare Workers AI
     base_url: https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/v1
@@ -90,13 +45,6 @@ providers:
     uses_data_for_training: unknown
     tier: 2
     adapter: openai
-    models:
-      - name: "@cf/meta/llama-3.1-8b-instruct-fp8"
-        alias: cloudflare-free
-        priority: 35
-        context_max: 32000
-        capabilities: [text, tools, json]
-        limits: []
   - slug: cohere
     name: Cohere
     base_url: https://api.cohere.ai/compatibility/v1
@@ -106,13 +54,6 @@ providers:
     uses_data_for_training: unknown
     tier: 3
     adapter: openai
-    models:
-      - name: command-r7b-12-2024
-        alias: cohere-free
-        priority: 45
-        context_max: 128000
-        capabilities: [text, tools]
-        limits: []
   - slug: mistral
     name: Mistral
     base_url: https://api.mistral.ai/v1
@@ -122,13 +63,6 @@ providers:
     uses_data_for_training: unknown
     tier: 3
     adapter: openai
-    models:
-      - name: mistral-small-latest
-        alias: mistral-free
-        priority: 50
-        context_max: 32768
-        capabilities: [text, tools, json]
-        limits: []
   - slug: nvidia
     name: NVIDIA NIM
     base_url: https://integrate.api.nvidia.com/v1
@@ -138,7 +72,6 @@ providers:
     uses_data_for_training: unknown
     tier: 3
     adapter: openai
-    models: []
   - slug: kilo
     name: Kilo Gateway
     base_url: https://api.kilo.ai/api/gateway
@@ -148,14 +81,6 @@ providers:
     uses_data_for_training: unknown
     tier: 3
     adapter: openai
-    models:
-      - name: kilo-auto/free
-        alias: kilo-free
-        priority: 25
-        weight: 2
-        context_max: 128000
-        capabilities: [text, tools]
-        limits: []
   - slug: ollama
     name: Ollama
     base_url: http://localhost:11434/v1
@@ -165,7 +90,6 @@ providers:
     uses_data_for_training: false
     tier: 4
     adapter: openai
-    models: []
   - slug: huggingface
     name: Hugging Face Inference Providers
     base_url: https://router.huggingface.co/v1
@@ -175,10 +99,3 @@ providers:
     uses_data_for_training: unknown
     tier: 4
     adapter: openai
-    models:
-      - name: openai/gpt-oss-120b:groq
-        alias: hf-free-credit
-        priority: 60
-        context_max: 128000
-        capabilities: [text, tools, json]
-        limits: []

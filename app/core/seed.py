@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
-from app.db.models import Model, Provider
+from app.db.models import Provider
 
 
 async def load_seed(session: AsyncSession, settings: Settings | None = None) -> None:
@@ -22,9 +22,11 @@ async def load_seed(session: AsyncSession, settings: Settings | None = None) -> 
     content = yaml.safe_load(raw_content) or {}
     for provider_data in content.get("providers", []):
         data = dict(provider_data)
-        models = data.pop("models", [])
+        # Model inventories are discovered from provider APIs at runtime. The legacy
+        # ``models`` field in old seed files is deliberately ignored.
+        data.pop("models", None)
         adapter = data.pop("adapter", "openai")
-        tier = data.pop("tier", 3)
+        data.pop("tier", None)
         provider_slug = data["slug"]
         key = getattr(settings, data["env_key_name"].lower(), None)
         if key is not None and hasattr(key, "get_secret_value"):
@@ -61,25 +63,4 @@ async def load_seed(session: AsyncSession, settings: Settings | None = None) -> 
         else:
             for name, value in values.items():
                 setattr(provider, name, value)
-        for model_data in models:
-            result = await session.execute(
-                select(Model).where(
-                    Model.provider_id == provider.id, Model.name == model_data["name"]
-                )
-            )
-            model = result.scalar_one_or_none()
-            model_values = {
-                "alias": model_data.get("alias"),
-                "priority": model_data.get("priority", 100),
-                "weight": model_data.get("weight", 1),
-                "context_max": model_data.get("context_max", 8192),
-                "capabilities": model_data.get("capabilities", ["text"]),
-                "is_enabled": model_data.get("is_enabled", True),
-                "tier": tier,
-            }
-            if model is None:
-                session.add(Model(provider_id=provider.id, name=model_data["name"], **model_values))
-            else:
-                for name, value in model_values.items():
-                    setattr(model, name, value)
     await session.commit()

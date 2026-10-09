@@ -106,7 +106,9 @@ async def complete_with_fallback(
     candidates = [
         (model, provider)
         for model, provider in result.all()
-        if (requested_model in {"auto", model.name, model.alias})
+        if (
+            requested_model in {"auto", model.name, model.alias, f"{provider.slug}/{model.name}"}
+        )
         and estimated_context <= model.context_max
         and required.issubset(set(model.capabilities))
         and provider.adapter in {"openai", "google"}
