@@ -3,12 +3,12 @@
 from datetime import datetime
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     DateTime,
     ForeignKey,
     Index,
     Integer,
-    JSON,
     String,
     Text,
     UniqueConstraint,
@@ -111,9 +111,7 @@ class ModelHealth(TimestampMixin, Base):
 
     __tablename__ = "model_health"
     id: Mapped[int] = mapped_column(primary_key=True)
-    model_id: Mapped[int] = mapped_column(
-        ForeignKey("models.id", ondelete="CASCADE"), unique=True
-    )
+    model_id: Mapped[int] = mapped_column(ForeignKey("models.id", ondelete="CASCADE"), unique=True)
     state: Mapped[str] = mapped_column(String(16), default="closed")
     consecutive_failures: Mapped[int] = mapped_column(Integer, default=0)
     cooldown_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

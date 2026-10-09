@@ -10,6 +10,12 @@ Motivo: reduce dependencias y permite normalizar errores HTTP y `Retry-After` si
 
 Actualización: streaming y funciones específicas no compatibles con OpenAI aún requieren implementación. Se configuraron los endpoints compatibles con OpenAI para Cohere, Mistral, NVIDIA NIM, Kilo Gateway y Cloudflare. Los modelos y límites de esos proveedores no se rellenan hasta verificarlos por separado.
 
+## Métricas de operación
+
+Decisión: `/metrics` publica contadores por resultado y consumo de cuotas en formato Prometheus cuando `PROMETHEUS_ENABLED=true`; en otro caso responde 404.
+
+Motivo: permite integrar el monitoreo sin agregar una dependencia de instrumentación en tiempo de ejecución. La ruta debe limitarse desde la red o el proxy de despliegue.
+
 ## Estado de cuotas
 
 Contexto: el plan pide cuotas compartidas entre peticiones y persistidas en MySQL, sin Redis en la primera versión.

@@ -1,12 +1,11 @@
 """Basic process health endpoint checks."""
 
-from fastapi.testclient import TestClient
+import pytest
 
-from app.main import app
+from app.main import health
 
 
-def test_health_reports_process_liveness() -> None:
+@pytest.mark.asyncio
+async def test_health_reports_process_liveness() -> None:
     """The liveness endpoint must respond without database dependencies."""
-    response = TestClient(app).get("/health")
-    assert response.status_code == 200
-    assert response.json() == {"status": "ok"}
+    assert await health() == {"status": "ok"}

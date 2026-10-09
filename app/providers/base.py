@@ -156,11 +156,13 @@ class GoogleAIStudioAdapter:
             "object": "chat.completion",
             "created": 0,
             "model": model,
-            "choices": [{
-                "index": 0,
-                "message": {"role": "assistant", "content": text},
-                "finish_reason": candidate.get("finishReason", "STOP").lower(),
-            }],
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {"role": "assistant", "content": text},
+                    "finish_reason": candidate.get("finishReason", "STOP").lower(),
+                }
+            ],
             "usage": {
                 "prompt_tokens": prompt_tokens,
                 "completion_tokens": completion_tokens,

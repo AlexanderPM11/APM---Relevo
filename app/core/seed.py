@@ -1,5 +1,6 @@
 """Idempotent provider and model catalog loading."""
 
+import asyncio
 from pathlib import Path
 from typing import Any
 
@@ -15,9 +16,10 @@ async def load_seed(session: AsyncSession, settings: Settings | None = None) -> 
     """Upsert provider catalog records without overwriting operator limits."""
     settings = settings or get_settings()
     seed_path = Path("config/models.seed.yaml")
-    if not seed_path.exists():
+    if not await asyncio.to_thread(seed_path.is_file):
         return
-    content = yaml.safe_load(seed_path.read_text(encoding="utf-8")) or {}
+    raw_content = await asyncio.to_thread(seed_path.read_text, encoding="utf-8")
+    content = yaml.safe_load(raw_content) or {}
     for provider_data in content.get("providers", []):
         data = dict(provider_data)
         models = data.pop("models", [])
@@ -25,7 +27,7 @@ async def load_seed(session: AsyncSession, settings: Settings | None = None) -> 
         tier = data.pop("tier", 3)
         provider_slug = data["slug"]
         key = getattr(settings, data["env_key_name"].lower(), None)
-        if hasattr(key, "get_secret_value"):
+        if key is not None and hasattr(key, "get_secret_value"):
             key = key.get_secret_value()
         enabled = bool(key)
         if provider_slug == "cloudflare":
@@ -70,7 +72,8 @@ async def load_seed(session: AsyncSession, settings: Settings | None = None) -> 
                 "weight": model_data.get("weight", 1),
                 "context_max": model_data.get("context_max", 8192),
                 "capabilities": model_data.get("capabilities", ["text"]),
-                "is_enabled": True, "tier": tier,
+                "is_enabled": True,
+                "tier": tier,
             }
             if model is None:
                 session.add(Model(provider_id=provider.id, name=model_data["name"], **model_values))

@@ -1,9 +1,8 @@
 """Create the initial Relevo schema."""
 
 from alembic import op
-
-from app.db.base import Base
 from app.db import models  # noqa: F401
+from app.db.base import Base
 
 revision = "0001_initial_schema"
 down_revision = None

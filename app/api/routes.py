@@ -17,7 +17,6 @@ from app.core.security import (
     create_access_token,
     generate_api_key,
     hash_api_key,
-    hash_password,
     verify_password,
 )
 from app.db.models import (
@@ -102,14 +101,16 @@ async def chat_completions(
             session, settings, request.model, payload
         )
     except ProviderError as error:
-        session.add(RequestLog(
-            api_key_id=api_key.id,
-            requested_model=request.model,
-            attempts=error.attempts,
-            status="error",
-            latency_ms=int((time.monotonic() - started) * 1000),
-            error_code=f"upstream_{error.status_code}",
-        ))
+        session.add(
+            RequestLog(
+                api_key_id=api_key.id,
+                requested_model=request.model,
+                attempts=error.attempts,
+                status="error",
+                latency_ms=int((time.monotonic() - started) * 1000),
+                error_code=f"upstream_{error.status_code}",
+            )
+        )
         await session.commit()
         headers = {
             "Retry-After": str(error.retry_after or settings.router_cooldown_default_seconds)
@@ -119,21 +120,21 @@ async def chat_completions(
     response.headers["X-Relevo-Provider"] = provider.slug
     response.headers["X-Relevo-Attempts"] = str(attempts)
     usage = completion.get("usage", {})
-    session.add(RequestLog(
-        api_key_id=api_key.id,
-        requested_model=request.model,
-        final_model=model.name,
-        attempts=attempts,
-        status="success",
-        latency_ms=int((time.monotonic() - started) * 1000),
-        input_tokens=int(usage.get("prompt_tokens", 0)),
-        output_tokens=int(usage.get("completion_tokens", 0)),
-    ))
+    session.add(
+        RequestLog(
+            api_key_id=api_key.id,
+            requested_model=request.model,
+            final_model=model.name,
+            attempts=attempts,
+            status="success",
+            latency_ms=int((time.monotonic() - started) * 1000),
+            input_tokens=int(usage.get("prompt_tokens", 0)),
+            output_tokens=int(usage.get("completion_tokens", 0)),
+        )
+    )
     await session.commit()
     completion["model"] = (
-        request.model
-        if request.model not in ("auto", model.alias)
-        else model.alias or model.name
+        request.model if request.model not in ("auto", model.alias) else model.alias or model.name
     )
     return completion
 
@@ -181,7 +182,9 @@ async def login(body: LoginRequest, request: Request, session: SessionDep) -> di
         raise HTTPException(401, "Invalid email or password")
     settings = get_settings()
     token = create_access_token(
-        str(admin.email), settings.jwt_secret.get_secret_value(), settings.jwt_algorithm,
+        str(admin.email),
+        settings.jwt_secret.get_secret_value(),
+        settings.jwt_algorithm,
         settings.jwt_expire_minutes,
     )
     return {"access_token": token, "token_type": "bearer"}
@@ -193,7 +196,9 @@ async def create_api_key(body: ApiKeyCreate, session: SessionDep) -> dict[str, A
     key, prefix = generate_api_key()
     settings = get_settings()
     record = ApiKey(
-        name=body.name, owner=body.owner, prefix=prefix,
+        name=body.name,
+        owner=body.owner,
+        prefix=prefix,
         key_hash=hash_api_key(key, settings.api_key_pepper.get_secret_value()),
         requests_per_minute=body.requests_per_minute,
     )
@@ -206,9 +211,17 @@ async def create_api_key(body: ApiKeyCreate, session: SessionDep) -> dict[str, A
 async def list_api_keys(session: SessionDep) -> list[dict[str, Any]]:
     """List consumer key metadata without returning key digests."""
     result = await session.execute(select(ApiKey).order_by(ApiKey.id))
-    return [{"id": key.id, "name": key.name, "prefix": key.prefix,
-             "owner": key.owner, "is_active": key.is_active,
-             "requests_per_minute": key.requests_per_minute} for key in result.scalars()]
+    return [
+        {
+            "id": key.id,
+            "name": key.name,
+            "prefix": key.prefix,
+            "owner": key.owner,
+            "is_active": key.is_active,
+            "requests_per_minute": key.requests_per_minute,
+        }
+        for key in result.scalars()
+    ]
 
 
 @router.delete("/admin/api-keys/{key_id}", dependencies=[admin_guard()], status_code=204)
@@ -226,8 +239,17 @@ async def revoke_api_key(key_id: int, session: SessionDep) -> Response:
 async def list_providers(session: SessionDep) -> list[dict[str, Any]]:
     """List providers without secret material."""
     result = await session.execute(select(Provider).order_by(Provider.slug))
-    return [{"id": p.id, "slug": p.slug, "name": p.name, "base_url": p.base_url,
-             "env_key_name": p.env_key_name, "is_enabled": p.is_enabled} for p in result.scalars()]
+    return [
+        {
+            "id": p.id,
+            "slug": p.slug,
+            "name": p.name,
+            "base_url": p.base_url,
+            "env_key_name": p.env_key_name,
+            "is_enabled": p.is_enabled,
+        }
+        for p in result.scalars()
+    ]
 
 
 @router.delete("/admin/providers/{slug}", dependencies=[admin_guard()], status_code=204)
@@ -315,8 +337,10 @@ async def delete_model(model_id: int, session: SessionDep) -> Response:
 async def list_model_limits(model_id: int, session: SessionDep) -> list[dict[str, Any]]:
     """List configured quota windows for one model."""
     result = await session.execute(select(ModelLimit).where(ModelLimit.model_id == model_id))
-    return [{"id": item.id, "window": item.window, "metric": item.metric,
-             "max_value": item.max_value} for item in result.scalars()]
+    return [
+        {"id": item.id, "window": item.window, "metric": item.metric, "max_value": item.max_value}
+        for item in result.scalars()
+    ]
 
 
 @router.put("/admin/models/{model_id}/limits", dependencies=[admin_guard()])
@@ -335,9 +359,13 @@ async def set_model_limit(
         raise HTTPException(422, "Unsupported quota window or metric")
     if not isinstance(maximum, int) or maximum <= 0:
         raise HTTPException(422, "max_value must be a positive integer")
-    result = await session.execute(select(ModelLimit).where(
-        ModelLimit.model_id == model_id, ModelLimit.window == window, ModelLimit.metric == metric
-    ))
+    result = await session.execute(
+        select(ModelLimit).where(
+            ModelLimit.model_id == model_id,
+            ModelLimit.window == window,
+            ModelLimit.metric == metric,
+        )
+    )
     limit = result.scalar_one_or_none()
     if limit is None:
         limit = ModelLimit(model_id=model_id, window=window, metric=metric, max_value=maximum)
@@ -345,8 +373,12 @@ async def set_model_limit(
     else:
         limit.max_value = maximum
     await session.commit()
-    return {"id": limit.id, "window": limit.window, "metric": limit.metric,
-            "max_value": limit.max_value}
+    return {
+        "id": limit.id,
+        "window": limit.window,
+        "metric": limit.metric,
+        "max_value": limit.max_value,
+    }
 
 
 @router.post("/admin/models/{model_id}/reset-cooldown", dependencies=[admin_guard()])
@@ -382,12 +414,58 @@ async def stats(session: SessionDep) -> dict[str, Any]:
         .join(ModelUsage, ModelUsage.model_id == Model.id)
         .group_by(Model.name, ModelUsage.window, ModelUsage.metric)
     )
-    usage = [{"model": name, "window": window, "metric": metric, "consumed": consumed}
-             for name, window, metric, consumed in usage_result.all()]
+    usage = [
+        {"model": name, "window": window, "metric": metric, "consumed": consumed}
+        for name, window, metric, consumed in usage_result.all()
+    ]
     successful = sum(log.status == "success" for log in logs)
-    return {"requests": len(logs), "success_rate": successful / len(logs) if logs else 0,
-            "latency_p50_ms": percentile(0.50), "latency_p95_ms": percentile(0.95),
-            "fallbacks": sum(log.attempts > 1 for log in logs), "quota_by_model": usage}
+    return {
+        "requests": len(logs),
+        "success_rate": successful / len(logs) if logs else 0,
+        "latency_p50_ms": percentile(0.50),
+        "latency_p95_ms": percentile(0.95),
+        "fallbacks": sum(log.attempts > 1 for log in logs),
+        "quota_by_model": usage,
+    }
+
+
+@router.get("/metrics", include_in_schema=False)
+async def prometheus_metrics(session: SessionDep) -> Response:
+    """Expose aggregate counters in Prometheus text format when enabled."""
+    if not get_settings().prometheus_enabled:
+        raise HTTPException(404, "Metrics are disabled")
+    totals = await session.execute(
+        select(RequestLog.status, func.count(RequestLog.id)).group_by(RequestLog.status)
+    )
+    lines = [
+        "# HELP relevo_requests_total Requests handled by outcome.",
+        "# TYPE relevo_requests_total counter",
+    ]
+    for status, count in totals.all():
+        safe_status = str(status).replace("\\", "\\\\").replace('"', '\\"').replace("\n", "")
+        lines.append(f'relevo_requests_total{{status="{safe_status}"}} {count}')
+    usage = await session.execute(
+        select(Model.name, ModelUsage.window, ModelUsage.metric, func.sum(ModelUsage.consumed))
+        .join(ModelUsage, ModelUsage.model_id == Model.id)
+        .group_by(Model.name, ModelUsage.window, ModelUsage.metric)
+    )
+    lines.extend(
+        [
+            "# HELP relevo_quota_consumed Current persisted quota usage.",
+            "# TYPE relevo_quota_consumed gauge",
+        ]
+    )
+    for model, window, metric, consumed in usage.all():
+        labels = (model, window, metric)
+        encoded = [
+            value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "") for value in labels
+        ]
+        lines.append(
+            "relevo_quota_consumed{"
+            f'model="{encoded[0]}",window="{encoded[1]}",metric="{encoded[2]}"'
+            f"}} {consumed}"
+        )
+    return Response("\n".join(lines) + "\n", media_type="text/plain; version=0.0.4; charset=utf-8")
 
 
 @router.post("/admin/seed/reload", dependencies=[admin_guard()])

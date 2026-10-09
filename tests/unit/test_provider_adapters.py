@@ -58,8 +58,7 @@ async def test_google_adapter_translates_chat_messages() -> None:
     """Gemini adapter translates system and user messages to generateContent."""
     with respx.mock(assert_all_called=True) as mock:
         route = mock.post(
-            "https://generativelanguage.googleapis.com/v1beta/models/"
-            "gemini-test:generateContent"
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-test:generateContent"
         ).mock(
             return_value=httpx.Response(
                 200,
@@ -78,13 +77,16 @@ async def test_google_adapter_translates_chat_messages() -> None:
         adapter = GoogleAIStudioAdapter(
             "https://generativelanguage.googleapis.com/v1beta", "secret", 5
         )
-        result = await adapter.chat("gemini-test", {
-            "messages": [
-                {"role": "system", "content": "Be concise"},
-                {"role": "user", "content": "Hi"},
-            ],
-            "temperature": 0.2,
-        })
+        result = await adapter.chat(
+            "gemini-test",
+            {
+                "messages": [
+                    {"role": "system", "content": "Be concise"},
+                    {"role": "user", "content": "Hi"},
+                ],
+                "temperature": 0.2,
+            },
+        )
     assert result["choices"][0]["message"]["content"] == "Hello"
     assert result["usage"]["total_tokens"] == 3
     payload = route.calls[0].request.content

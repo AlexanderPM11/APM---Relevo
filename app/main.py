@@ -1,19 +1,18 @@
 """FastAPI application entry point."""
 
-from collections.abc import Awaitable, Callable, AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 
-from fastapi import FastAPI
-from fastapi import HTTPException, Request, Response
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select, text
 from sqlalchemy.orm import selectinload
 
-from app.core.config import get_settings
-from app.core.seed import load_seed
-from app.core.security import hash_password
 from app.api.routes import router as api_router
+from app.core.config import get_settings
+from app.core.security import hash_password
+from app.core.seed import load_seed
 from app.db.models import AdminUser
 from app.db.session import SessionLocal, engine
 
@@ -25,10 +24,12 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         if settings.admin_email and settings.admin_password:
             result = await session.execute(select(AdminUser).limit(1))
             if result.scalar_one_or_none() is None:
-                session.add(AdminUser(
-                    email=str(settings.admin_email),
-                    password_hash=hash_password(settings.admin_password.get_secret_value()),
-                ))
+                session.add(
+                    AdminUser(
+                        email=str(settings.admin_email),
+                        password_hash=hash_password(settings.admin_password.get_secret_value()),
+                    )
+                )
                 await session.commit()
         await load_seed(session, settings)
     yield

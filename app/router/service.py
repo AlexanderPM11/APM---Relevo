@@ -9,7 +9,12 @@ from sqlalchemy.orm import selectinload
 
 from app.core.config import Settings
 from app.db.models import Model, ModelHealth, Provider
-from app.providers.base import GoogleAIStudioAdapter, OpenAICompatibleAdapter, ProviderError
+from app.providers.base import (
+    GoogleAIStudioAdapter,
+    OpenAICompatibleAdapter,
+    ProviderAdapter,
+    ProviderError,
+)
 from app.router.quotas import (
     QuotaExceeded,
     adjust_token_reservation,
@@ -56,7 +61,7 @@ def provider_key(settings: Settings, env_name: str) -> str | None:
     if value is None:
         return None
     if hasattr(value, "get_secret_value"):
-        return value.get_secret_value()
+        return str(value.get_secret_value())
     return str(value)
 
 
@@ -139,18 +144,17 @@ async def complete_with_fallback(
             retry_after_values.append(error.retry_after)
             continue
         attempts += 1
+        adapter: ProviderAdapter
         if provider.adapter == "google":
             adapter = GoogleAIStudioAdapter(
-                provider.base_url, key, settings.router_request_timeout_seconds
+                provider.base_url, key or "", settings.router_request_timeout_seconds
             )
         elif provider.adapter == "openai":
             base_url = provider.base_url
             if provider.slug == "ollama" and settings.ollama_base_url:
                 base_url = settings.ollama_base_url.rstrip("/")
             if provider.slug == "cloudflare":
-                base_url = base_url.replace(
-                    "{account_id}", settings.cloudflare_account_id or ""
-                )
+                base_url = base_url.replace("{account_id}", settings.cloudflare_account_id or "")
             adapter = OpenAICompatibleAdapter(
                 base_url,
                 key or "",
@@ -216,7 +220,9 @@ async def complete_with_fallback(
         raise ProviderError(
             502, "All configured providers rejected authentication", attempts=attempts
         )
-    retry_after = min(retry_after_values) if retry_after_values else next(
-        (error.retry_after for error in errors if error.retry_after), None
+    retry_after = (
+        min(retry_after_values)
+        if retry_after_values
+        else next((error.retry_after for error in errors if error.retry_after), None)
     )
     raise ProviderError(503, "All available models failed", retry_after, attempts)
