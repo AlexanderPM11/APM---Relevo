@@ -10,6 +10,55 @@ type Key = {
   requests_per_minute: number
 }
 
+test('summary, service status, theme preference and command navigation are usable', async ({ page }) => {
+  await page.route('**/ready', (route) => route.fulfill({ json: { status: 'ok', database: 'ok', models: 'available' } }))
+  await page.route('**/admin/auth/login', (route) => route.fulfill({ json: { access_token: 'e2e-admin-token' } }))
+  await page.route('**/admin/api-keys', (route) => route.fulfill({ json: [{ id: 1, name: 'Portal', prefix: 'a1b2c3d4', owner: 'Equipo Web', is_active: true, requests_per_minute: 60 }] }))
+  await page.route('**/admin/playground/catalog', (route) => route.fulfill({ json: { api_keys: [], models: [] } }))
+  await page.goto('')
+  await page.getByLabel('Correo de administrador').fill('admin@example.com')
+  await page.getByLabel('Contraseña').fill('password-for-e2e')
+  await page.getByRole('button', { name: 'Entrar al panel' }).click()
+  await expect(page.getByRole('heading', { name: 'Resumen' })).toBeVisible()
+  await expect(page.getByText('Claves registradas')).toBeVisible()
+  await expect(page.getByText('Equipo Web')).toBeVisible()
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([])
+
+  await page.getByRole('button', { name: 'Cambiar a tema oscuro' }).click()
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
+  expect(await page.evaluate(() => localStorage.getItem('relevo.console.theme'))).toBe('dark')
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([])
+  await page.getByRole('button', { name: 'Servicio listo' }).click()
+  await expect(page.getByText('Base de datos', { exact: true })).toBeVisible()
+  await expect(page.getByText('Disponibles', { exact: true })).toBeVisible()
+  await page.keyboard.press('Control+k')
+  const palette = page.getByRole('dialog', { name: 'Acciones rápidas' })
+  await expect(palette).toBeVisible()
+  await page.getByRole('option', { name: 'Ir a Playground Navegación' }).click()
+  await expect(page.getByRole('heading', { name: 'Chat API' })).toBeVisible()
+})
+
+test('invalid credentials do not enumerate accounts and an expired JWT returns to login', async ({ page }) => {
+  await page.route('**/admin/auth/login', (route) => route.fulfill({ status: 401, json: { detail: 'Invalid email or password' } }))
+  await page.goto('')
+  await expect(page.getByRole('heading', { name: 'Qué bueno verte de nuevo.' })).toBeVisible()
+  await page.getByLabel('Correo de administrador').fill('not-a-real-account@example.com')
+  await page.getByLabel('Contraseña').fill('wrong-password')
+  await page.getByRole('button', { name: 'Entrar al panel' }).click()
+  await expect(page.getByRole('alert')).toHaveText('El correo o la contraseña no son válidos.')
+  await expect(page.getByRole('alert')).not.toContainText('not-a-real-account@example.com')
+
+  await page.unroute('**/admin/auth/login')
+  await page.route('**/admin/auth/login', (route) => route.fulfill({ json: { access_token: 'expired-admin-token' } }))
+  await page.route('**/admin/api-keys', (route) => route.fulfill({ status: 401, json: { detail: 'Invalid or expired administrator token' } }))
+  await page.getByLabel('Correo de administrador').fill('admin@example.com')
+  await page.getByLabel('Contraseña').fill('password-for-e2e')
+  await page.getByRole('button', { name: 'Entrar al panel' }).click()
+  await expect(page.getByRole('heading', { name: 'Qué bueno verte de nuevo.' })).toBeVisible()
+  await expect(page.getByRole('alert')).toContainText('Tu sesión expiró')
+  expect(await page.evaluate(() => sessionStorage.getItem('relevo.admin.session'))).toBeNull()
+})
+
 test('login, create one-time key, list and revoke it', async ({ page }) => {
   let keys: Key[] = []
   const secret = 'rlv_4ad28f10_unique_secret_for_e2e'
@@ -43,11 +92,12 @@ test('login, create one-time key, list and revoke it', async ({ page }) => {
   await page.getByLabel('Correo de administrador').fill('admin@example.com')
   await page.getByLabel('Contraseña').fill('password-for-e2e')
   await page.getByRole('button', { name: 'Entrar al panel' }).click()
+  await page.getByRole('button', { name: 'Claves API' }).click()
 
   await expect(page.getByRole('heading', { name: 'Tus claves, bajo control.' })).toBeVisible()
   await page.getByRole('button', { name: 'Nueva clave' }).click()
   await page.getByLabel('Nombre de la aplicación').fill('Portal de pruebas')
-  await page.getByLabel('Propietario').fill('Equipo web')
+  await page.getByPlaceholder('p. ej. equipo de producto').fill('Equipo web')
   await page.getByRole('button', { name: 'Crear clave' }).click()
   await expect(page.getByRole('heading', { name: 'Guárdala ahora.' })).toBeVisible()
   await expect(page.getByText('La clave de Portal de pruebas solo se muestra esta vez.')).toBeVisible()
@@ -60,6 +110,11 @@ test('login, create one-time key, list and revoke it', async ({ page }) => {
   await expect(page.getByText('rlv_4ad28f10••••••••')).toBeVisible()
   await expect(page.getByText(secret)).toHaveCount(0)
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([])
+  await page.getByRole('button', { name: 'Portal de pruebas' }).click()
+  await expect(page.getByRole('dialog', { name: 'Portal de pruebas' })).toBeVisible()
+  await expect(page.getByRole('dialog', { name: 'Portal de pruebas' }).getByText('rlv_4ad28f10••••••••')).toBeVisible()
+  await expect(page.getByText(secret)).toHaveCount(0)
+  await page.getByRole('button', { name: 'Cerrar detalles' }).click()
   await page.getByRole('button', { name: 'Revocar', exact: true }).click()
   await page.getByRole('button', { name: 'Revocar acceso' }).click()
   await expect(page.locator('.key-row').filter({ hasText: 'Portal de pruebas' }).getByText('Revocada', { exact: true })).toBeVisible()
@@ -102,14 +157,14 @@ test('API playground chats with a selected key/model and sends image attachments
   await page.getByLabel('Correo de administrador').fill('admin@example.com')
   await page.getByLabel('Contraseña').fill('password-for-e2e')
   await page.getByRole('button', { name: 'Entrar al panel' }).click()
-  await page.getByRole('button', { name: 'Ejemplos API' }).click()
+  await page.getByRole('button', { name: 'Playground' }).click()
 
   await expect(page.getByRole('heading', { name: 'Chat API' })).toBeVisible()
   await expect(page.getByLabel('Clave API')).toContainText('Aplicación web')
-  await expect(page.getByLabel('Modelo')).toContainText('Automático · reintenta con otros modelos')
-  await expect(page.getByLabel('Modelo')).toContainText('llama-3.3-70b-versatile · Groq · visión')
+  await expect(page.getByLabel('Modelo', { exact: true })).toContainText('Automático · reintenta con otros modelos')
+  await expect(page.getByLabel('Modelo', { exact: true })).toContainText('llama-3.3-70b-versatile · Groq · visión')
 
-  await page.getByLabel('Modelo').selectOption('llama-3.3-70b-versatile')
+  await page.getByLabel('Modelo', { exact: true }).selectOption('llama-3.3-70b-versatile')
   await page.getByLabel('Escribe un mensaje').fill('¿Qué aparece en esta imagen?')
   await page.getByLabel('Subir imágenes').setInputFiles({
     name: 'pixel.png',
@@ -125,11 +180,25 @@ test('API playground chats with a selected key/model and sends image attachments
     expect.objectContaining({ type: 'image_url', image_url: expect.objectContaining({ url: expect.stringMatching(/^data:image\/png;base64,/) }) }),
   ]))
 
-  await page.getByLabel('Modelo').selectOption('auto')
+  await page.getByLabel('Modelo', { exact: true }).selectOption('auto')
   await page.getByLabel('Escribe un mensaje').fill('Continúa en modo automático')
   await page.getByRole('button', { name: 'Enviar mensaje' }).click()
   await expect(page.getByText('Respuesta de prueba de Relevo.').last()).toBeVisible()
   expect(lastChat?.model).toBe('auto')
+
+  const image = (name: string) => ({ name, mimeType: 'image/png', buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/pXcAAAAASUVORK5CYII=', 'base64') })
+  await page.getByRole('button', { name: 'Nueva conversación' }).click()
+  await page.getByLabel('Subir imágenes').setInputFiles(['uno.png', 'dos.png', 'tres.png', 'cuatro.png'].map(image))
+  await expect(page.locator('.image-attachment')).toHaveCount(4)
+  await page.getByLabel('Subir imágenes').setInputFiles(image('cinco.png'))
+  await expect(page.getByRole('alert')).toContainText('Puedes adjuntar hasta 4 imágenes')
+  await expect(page.locator('.image-attachment')).toHaveCount(4)
+  await page.getByRole('button', { name: 'Nueva conversación' }).click()
+  await expect(page.locator('.image-attachment')).toHaveCount(0)
+  await expect(page.getByText('Respuesta de prueba de Relevo.')).toHaveCount(0)
+  await page.getByLabel('Subir imágenes').setInputFiles({ name: 'grande.png', mimeType: 'image/png', buffer: Buffer.alloc(5 * 1024 * 1024 + 1) })
+  await expect(page.getByRole('alert')).toContainText('Cada imagen debe pesar como máximo 5 MB')
+  await expect(page.locator('.image-attachment')).toHaveCount(0)
 })
 
 test('T061/T067/T071 parcial: navegador se conecta a FastAPI y gestiona una clave', async ({ page }) => {
@@ -137,6 +206,7 @@ test('T061/T067/T071 parcial: navegador se conecta a FastAPI y gestiona una clav
   await page.getByLabel('Correo de administrador').fill('playwright-admin@example.com')
   await page.getByLabel('Contraseña').fill('playwright-only-password')
   await page.getByRole('button', { name: 'Entrar al panel' }).click()
+  await page.getByRole('button', { name: 'Claves API' }).click()
   await expect(page.getByRole('heading', { name: 'Tus claves, bajo control.' })).toBeVisible()
 
   const appName = `Aplicación real ${Date.now()}`
@@ -156,6 +226,7 @@ test('T061/T067/T071 parcial: navegador se conecta a FastAPI y gestiona una clav
 test('login screen and key guide meet automated accessibility checks', async ({ page }) => {
   await page.route('**/console-config', (route) => route.fulfill({ json: { api_base_url: 'http://localhost:8000' } }))
   await page.goto('')
+  await expect(page.getByRole('heading', { name: 'Qué bueno verte de nuevo.' })).toBeVisible()
   const loginAudit = await new AxeBuilder({ page }).analyze()
   expect(loginAudit.violations).toEqual([])
 
@@ -164,6 +235,8 @@ test('login screen and key guide meet automated accessibility checks', async ({ 
   await page.route('**/admin/auth/login', (route) => route.fulfill({ json: { access_token: 'e2e-admin-token' } }))
   await page.route('**/admin/api-keys', (route) => route.fulfill({ json: [] }))
   await page.getByRole('button', { name: 'Entrar al panel' }).click()
+  await expect(page.getByRole('heading', { name: 'Resumen' })).toBeVisible()
+  await page.getByRole('button', { name: 'Claves API' }).click()
   await expect(page.getByRole('heading', { name: 'Tus claves, bajo control.' })).toBeVisible()
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([])
   await page.getByRole('button', { name: 'Conectar una app' }).click()
@@ -180,6 +253,7 @@ test('T076/T077/T079/T080 parcial: layout de móvil y escritorio sin desbordamie
   await page.getByLabel('Correo de administrador').fill('admin@example.com')
   await page.getByLabel('Contraseña').fill('password-for-e2e')
   await page.getByRole('button', { name: 'Entrar al panel' }).click()
+  await page.getByRole('button', { name: 'Claves API' }).click()
   await expect(page.getByRole('heading', { name: 'Tus claves, bajo control.' })).toBeVisible()
 
   for (const width of [320, 360, 390, 768, 1024, 1440]) {
@@ -205,6 +279,7 @@ test('T084/T085 parcial: diálogo conserva el foco de teclado y pasa axe', async
   await page.getByLabel('Correo de administrador').fill('admin@example.com')
   await page.getByLabel('Contraseña').fill('password-for-e2e')
   await page.getByRole('button', { name: 'Entrar al panel' }).click()
+  await page.getByRole('button', { name: 'Claves API' }).click()
   await page.getByRole('button', { name: 'Nueva clave' }).click()
 
   const dialog = page.getByRole('dialog', { name: 'Una clave por aplicación.' })

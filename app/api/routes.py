@@ -192,9 +192,7 @@ async def playground_chat(
     ):
         raise HTTPException(404, "Active API key not found")
     settings = get_settings()
-    if not await allow_request(
-        f"api-key:{api_key.id}", api_key.requests_per_minute, 60
-    ):
+    if not await allow_request(f"api-key:{api_key.id}", api_key.requests_per_minute, 60):
         raise HTTPException(429, "API key rate limit exceeded", headers={"Retry-After": "60"})
     api_key.last_used_at = now
     payload = body.model_dump(exclude={"api_key_id", "model", "stream"}, exclude_none=True)

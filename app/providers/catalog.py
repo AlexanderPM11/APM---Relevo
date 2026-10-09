@@ -98,10 +98,14 @@ def _normalize_models(provider: Provider, payload: Any) -> list[dict[str, Any]]:
             capabilities.append("vision")
         pricing = item.get("pricing") or {}
         free_route = name.endswith(":free") or name == "kilo-auto/free"
-        free_price = all(
-            pricing.get(field) is not None and float(pricing[field]) == 0
-            for field in ("prompt", "completion")
-        ) if isinstance(pricing, dict) else False
+        free_price = (
+            all(
+                pricing.get(field) is not None and float(pricing[field]) == 0
+                for field in ("prompt", "completion")
+            )
+            if isinstance(pricing, dict)
+            else False
+        )
         is_free = free_route or free_price
         # These gateways expose explicit prices. Keep the free-first catalog free-only
         # where the provider gives us reliable pricing metadata.
@@ -194,9 +198,9 @@ async def refresh_provider_catalog(session: AsyncSession, settings: Settings) ->
 
             # Disable stale entries from the old seed while preserving discovered records and
             # operator-disabled models. Existing limits, health, and priority stay attached.
-            for model in existing.values():
-                if model.name not in discovered_names:
-                    model.is_enabled = False
+            for existing_model in existing.values():
+                if existing_model.name not in discovered_names:
+                    existing_model.is_enabled = False
 
             for item in discovered:
                 model = existing.get(item["name"])

@@ -12,6 +12,7 @@ from sqlalchemy.pool import StaticPool
 
 import app.api.routes as api_routes
 import app.auth.dependencies as auth_dependencies
+import app.auth.rate_limit as auth_rate_limit
 from app.core.config import Settings
 from app.core.security import hash_password
 from app.db.base import Base
@@ -22,6 +23,7 @@ from app.db.session import get_session
 @pytest_asyncio.fixture
 async def api_client(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[AsyncClient]:
     """Provide real FastAPI routes backed by fresh, isolated SQLite tables."""
+    auth_rate_limit._events.clear()
     settings = Settings(
         _env_file=None,
         jwt_secret=SecretStr("unit-test-jwt-secret-not-for-production"),
